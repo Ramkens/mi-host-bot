@@ -37,6 +37,9 @@ async def provision_worker(
     env_vars = {
         "MIHOST_ROLE": "worker",
         "MIHOST_SHARD_NAME": shard.name,
+        # Pin Python so dependencies (pydantic-core, etc.) get prebuilt wheels;
+        # default Render runtime moved to 3.14 which lacks some wheels.
+        "PYTHON_VERSION": "3.11.9",
         # Workers share the master's data store. SECRET_KEY must match so
         # they can decrypt shard rows (they don't, but other secrets too).
         "DATABASE_URL": settings.database_url,
