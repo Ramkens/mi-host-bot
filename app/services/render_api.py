@@ -220,6 +220,8 @@ class RenderClient:
         plan: str = "free",
         region: Optional[str] = None,
         version: int = 16,
+        database_name: str = "mihost",
+        database_user: str = "mihost",
     ) -> dict:
         owner_id = await self.autodetect_owner()
         if not owner_id:
@@ -230,6 +232,8 @@ class RenderClient:
             "plan": plan,
             "region": region or settings.render_region,
             "version": str(version),
+            "databaseName": database_name,
+            "databaseUser": database_user,
         }
         return await self._req("POST", "/postgres", json=body)
 
@@ -237,8 +241,43 @@ class RenderClient:
         data = await self._req("GET", "/postgres")
         return [item.get("postgres", item) for item in (data or [])]
 
+    async def get_postgres(self, db_id: str) -> dict:
+        return await self._req("GET", f"/postgres/{db_id}")
+
     async def get_postgres_connection_info(self, db_id: str) -> dict:
         return await self._req("GET", f"/postgres/{db_id}/connection-info")
+
+    async def wait_for_postgres_available(
+        self, db_id: str, timeout_seconds: int = 600, interval: float = 8.0
+    ) -> bool:
+        elapsed = 0.0
+        while elapsed < timeout_seconds:
+            try:
+                info = await self.get_postgres(db_id)
+                if info.get("status") == "available":
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("wait_for_postgres_available: %s", exc)
+            await asyncio.sleep(interval)
+            elapsed += interval
+        return False
+
+    async def update_env_var(
+        self, service_id: str, key: str, value: str
+    ) -> None:
+        """Upsert a single env var on a service."""
+        # Render API doesn't expose "patch single var" — fetch all, update, PUT.
+        existing = await self._req(
+            "GET", f"/services/{service_id}/env-vars"
+        )
+        env: dict[str, str] = {}
+        for item in (existing or []):
+            ev = item.get("envVar", item)
+            if ev.get("key"):
+                env[ev["key"]] = ev.get("value", "")
+        env[key] = value
+        body = [{"key": k, "value": v} for k, v in env.items()]
+        await self._req("PUT", f"/services/{service_id}/env-vars", json=body)
 
     # ---- Convenience ----
 

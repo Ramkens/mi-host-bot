@@ -236,3 +236,15 @@ async def cmd_stats(msg: Message, session: AsyncSession, user: User) -> None:
         f"Активных подписок: {s['active_subs']}\n"
         f"Доход всего: {s['revenue_total_rub']}₽ | 30д: {s['revenue_30d_rub']}₽"
     )
+
+
+@router.message(Command("rotate_db"))
+async def cmd_rotate_db(msg: Message, session: AsyncSession, user: User) -> None:
+    """Force a Postgres rotation (admin only — for testing)."""
+    if not await _require_admin(session, user):
+        return
+    await msg.answer("⏳ Запускаю ротацию Postgres…")
+    from app.services.db_rotation import rotate_now
+
+    result = await rotate_now(msg.bot, force=True)
+    await msg.answer(f"<pre>{result}</pre>", parse_mode="HTML")
