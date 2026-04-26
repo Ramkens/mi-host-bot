@@ -36,13 +36,13 @@ def buy_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="▪️ FunPay Cardinal · 40 ₽ / мес",
+                    text="• FunPay Cardinal · 40 ₽ / мес",
                     callback_data=f"buy:start:{ProductKind.CARDINAL.value}:std",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="▫️ Скрипт STD · 130 MB · 50 ₽ / мес",
+                    text="· Скрипт STD · 130 MB · 50 ₽ / мес",
                     callback_data=f"buy:start:{ProductKind.SCRIPT.value}:std",
                 )
             ],
@@ -132,11 +132,11 @@ def admin_pick_product(action: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="▪️ Cardinal",
+                    text="• Cardinal",
                     callback_data=f"admin:sub:{action}:p:{ProductKind.CARDINAL.value}",
                 ),
                 InlineKeyboardButton(
-                    text="▫️ Script STD",
+                    text="· Script STD",
                     callback_data=f"admin:sub:{action}:p:{ProductKind.SCRIPT.value}:std",
                 ),
                 InlineKeyboardButton(
@@ -195,13 +195,13 @@ def admin_coupon_pick_product() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="▪️ Cardinal",
+                    text="• Cardinal",
                     callback_data=f"admin:coupon:p:{ProductKind.CARDINAL.value}:std",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="▫️ Script STD",
+                    text="· Script STD",
                     callback_data=f"admin:coupon:p:{ProductKind.SCRIPT.value}:std",
                 )
             ],

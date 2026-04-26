@@ -135,9 +135,9 @@ async def _notify_admins_started(bot: Bot) -> None:
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     text = (
         "<b>🖤 Mi Host запущен</b>\n\n"
-        f"▪️ Коммит: <code>{sha}</code>"
+        f"• Коммит: <code>{sha}</code>"
         f"{f' ({branch})' if branch else ''}\n"
-        f"▪️ Время: <code>{when}</code>"
+        f"• Время: <code>{when}</code>"
     )
     for aid in settings.admin_ids_list:
         try:

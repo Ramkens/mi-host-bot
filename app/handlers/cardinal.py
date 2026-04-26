@@ -236,7 +236,7 @@ async def receive_main_cfg(
         return
     ok, content, err = await _read_cfg_payload(msg)
     if not ok or content is None:
-        await msg.answer(f"▫️ {err}")
+        await msg.answer(f"· {err}")
         return
     success, message = await write_user_main_cfg(inst.id, content)
     if success:
@@ -246,7 +246,7 @@ async def receive_main_cfg(
         )
         await state.clear()
     else:
-        await msg.answer(f"▫️ {message}\nИсправь и пришли ещё раз, или /cancel.")
+        await msg.answer(f"· {message}\nИсправь и пришли ещё раз, или /cancel.")
 
 
 @router.message(CardinalCfg.awaiting_resp_cfg)
@@ -268,11 +268,11 @@ async def receive_resp_cfg(
         return
     ok, content, err = await _read_cfg_payload(msg)
     if not ok or content is None:
-        await msg.answer(f"▫️ {err}")
+        await msg.answer(f"· {err}")
         return
     success, message = await write_user_aux_cfg(inst.id, "auto_response.cfg", content)
     await msg.answer(
-        f"{'✓' if success else '▫️'} {message}",
+        f"{'✓' if success else '·'} {message}",
         reply_markup=instance_actions(inst.id, inst.product.value)
         if success
         else None,
@@ -300,11 +300,11 @@ async def receive_deliv_cfg(
         return
     ok, content, err = await _read_cfg_payload(msg)
     if not ok or content is None:
-        await msg.answer(f"▫️ {err}")
+        await msg.answer(f"· {err}")
         return
     success, message = await write_user_aux_cfg(inst.id, "auto_delivery.cfg", content)
     await msg.answer(
-        f"{'✓' if success else '▫️'} {message}",
+        f"{'✓' if success else '·'} {message}",
         reply_markup=instance_actions(inst.id, inst.product.value)
         if success
         else None,

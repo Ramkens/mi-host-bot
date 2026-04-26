@@ -56,11 +56,11 @@ async def _greeting_text(session: AsyncSession, user: User) -> str:
         lines.append("<b>🖤 Активные подписки</b>")
         for s in active_subs:
             lines.append(
-                f"  ▪️ {s.product.value} — до <code>{fmt_msk(s.expires_at)}</code>"
+                f"  • {s.product.value} — до <code>{fmt_msk(s.expires_at)}</code>"
             )
     else:
         lines.append("")
-        lines.append("<i>▫️ нет активных подписок · /menu → 🖤 Купить</i>")
+        lines.append("<i>· нет активных подписок · /menu → 🖤 Купить</i>")
     if instances:
         lines.append("")
         lines.append("<b>▣ Серверы</b>")
@@ -157,8 +157,8 @@ async def cb_support(cb: CallbackQuery) -> None:
     admin_id = settings.admin_ids_list[0] if settings.admin_ids_list else 0
     text = (
         "<b>Поддержка</b>\n\n"
-        f"▪️ Админ: <a href=\"tg://user?id={admin_id}\">написать в чат</a>\n"
-        "▪️ Время ответа: до 12 часов\n\n"
+        f"• Админ: <a href=\"tg://user?id={admin_id}\">написать в чат</a>\n"
+        "• Время ответа: до 12 часов\n\n"
         "<b>Хочешь оплатить другой криптой?</b>\n"
         "Напиши админу: «оплата TON/BTC/ETH/…», он скинет адрес и вручную выдаст подписку.\n\n"
         "<i>Перед обращением — глянь /menu → «Мои инстансы» → Логи/Статус.</i>"

@@ -130,7 +130,7 @@ async def cb_inst_open(
             )
     text = (
         f"<b>▣ Сервер #{inst.id}</b>\n"
-        f"▪️ Продукт: {inst.product.value}{tier_suffix}\n"
+        f"• Продукт: {inst.product.value}{tier_suffix}\n"
         f"⟳ Статус (БД): {_status_icon(inst.status)} {inst.status.value}\n"
         f"⚙ Процесс: {'жив' if s.get('alive') else 'нет'}\n"
         f"🧬 PID: {s.get('pid') or '—'}\n"
@@ -464,9 +464,9 @@ async def _setup_finalize_cardinal(
     await session.commit()
     await msg.answer(
         f"<b>🖤 Спасибо!</b> Сервер #{inst.id} настроен.\n\n"
-        f"▪️ Пароль от Telegram-бота Cardinal: <code>{tg_pw_plain}</code>\n"
+        f"• Пароль от Telegram-бота Cardinal: <code>{tg_pw_plain}</code>\n"
         f"<i>Сохрани — показываю один раз.</i>\n\n"
-        f"▪️ Бот запустится в течение ~5 минут.\n"
+        f"• Бот запустится в течение ~5 минут.\n"
         f"Как только будет готов — напиши своему Telegram-боту "
         f"<code>/start</code> и введи этот пароль.",
         parse_mode="HTML",

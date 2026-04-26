@@ -470,7 +470,7 @@ async def cmd_drop_shard(msg: Message, session: AsyncSession, user: User) -> Non
         return
     await shards_repo.delete(session, sh.id)
     await session.commit()
-    await msg.answer(f"▪️ Шард <b>{sh.name}</b> удалён.", parse_mode="HTML")
+    await msg.answer(f"• Шард <b>{sh.name}</b> удалён.", parse_mode="HTML")
 
 
 # --- Coupons ---
@@ -539,7 +539,7 @@ async def cmd_create_coupon(msg: Message, session: AsyncSession, user: User) -> 
     await msg.answer(
         "<b>🎟️ Купон создан</b>\n\n"
         f"🖤 Код: <code>{cp.code}</code>\n"
-        f"▪️ Продукт: <b>{label}</b>\n"
+        f"• Продукт: <b>{label}</b>\n"
         f"◷ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
         f"🔢 Активаций: <b>{max_uses}</b>\n"
         f"⌛ Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)\n\n"
@@ -579,7 +579,7 @@ def _fmt_coupon_line(cp) -> str:
     else:
         exp = "∞"
     return (
-        f"  ▪️ <code>{cp.code}</code> · {label} · {span} · uses {uses} · до {exp}"
+        f"  • <code>{cp.code}</code> · {label} · {span} · uses {uses} · до {exp}"
     )
 
 
@@ -694,7 +694,7 @@ async def cmd_remove_days(msg: Message, session: AsyncSession, user: User) -> No
     sub = await subs_repo.extend(session, uid, product, -days)
     await session.commit()
     await msg.answer(
-        f"▪️ С юзера <code>{uid}</code> снято {days} дн. {product.value}. "
+        f"• С юзера <code>{uid}</code> снято {days} дн. {product.value}. "
         f"Истекает: <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code>",
         parse_mode="HTML",
     )
@@ -730,7 +730,7 @@ async def cmd_revoke_sub(msg: Message, session: AsyncSession, user: User) -> Non
 
         sub.expires_at = now_utc()
         await session.commit()
-    await msg.answer(f"▪️ Подписка {product.value} у <code>{uid}</code> отозвана.", parse_mode="HTML")
+    await msg.answer(f"• Подписка {product.value} у <code>{uid}</code> отозвана.", parse_mode="HTML")
 
 
 @router.message(Command("user_info"))
@@ -755,17 +755,17 @@ async def cmd_user_info(msg: Message, session: AsyncSession, user: User) -> None
     subs = await subs_repo.list_for_user(session, uid)
     lines = [
         f"<b>Юзер</b> <code>{target.id}</code>",
-        f"▪️ Имя: {target.first_name or '—'} (@{target.username or '—'})",
-        f"▪️ Админ: {target.is_admin} · Бан: {target.is_blocked}",
-        f"▪️ XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
+        f"• Имя: {target.first_name or '—'} (@{target.username or '—'})",
+        f"• Админ: {target.is_admin} · Бан: {target.is_blocked}",
+        f"• XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
         "",
         "<b>Подписки:</b>",
     ]
     if subs:
         for s in subs:
-            lines.append(f"  ▪️ {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}")
+            lines.append(f"  • {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}")
     else:
-        lines.append("  ▫️ нет")
+        lines.append("  · нет")
     await msg.answer("\n".join(lines), parse_mode="HTML")
 
 
@@ -869,7 +869,7 @@ async def _zip_for_user(target_user_id: int) -> bytes | None:
 @router.message(Command("export_user"))
 async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> None:
     if not _is_primary_admin(user):
-        await msg.answer("▫️ Команда только для главного админа.")
+        await msg.answer("· Команда только для главного админа.")
         return
     parts = (msg.text or "").split()
     if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
@@ -878,14 +878,14 @@ async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> No
     target = int(parts[1])
     data = await _zip_for_user(target)
     if data is None:
-        await msg.answer("▫️ У юзера нет инстансов или каталоги пусты.")
+        await msg.answer("· У юзера нет инстансов или каталоги пусты.")
         return
     from aiogram.types import BufferedInputFile
 
     fname = f"miihost_user{target}.zip"
     await msg.answer_document(
         BufferedInputFile(data, filename=fname),
-        caption=f"▪️ Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
+        caption=f"• Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
         parse_mode="HTML",
     )
 
@@ -893,7 +893,7 @@ async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> No
 @router.message(Command("export_all"))
 async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> None:
     if not _is_primary_admin(user):
-        await msg.answer("▫️ Команда только для главного админа.")
+        await msg.answer("· Команда только для главного админа.")
         return
     import io
     import zipfile
@@ -907,7 +907,7 @@ async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> Non
     )
     instances = list(res.scalars())
     if not instances:
-        await msg.answer("▫️ Нет активных инстансов.")
+        await msg.answer("· Нет активных инстансов.")
         return
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -946,7 +946,7 @@ async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> Non
 
     await msg.answer_document(
         BufferedInputFile(data, filename="mihost_export_all.zip"),
-        caption=f"▪️ Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
+        caption=f"• Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
         parse_mode="HTML",
     )
 
@@ -967,7 +967,7 @@ async def cb_subs_menu(cb: CallbackQuery, session: AsyncSession, user: User) -> 
         return
     if cb.message:
         await cb.message.answer(
-            "<b>▪️ Подписки</b>\n\n"
+            "<b>• Подписки</b>\n\n"
             "Управление подписками юзеров. Все действия — кнопками.",
             parse_mode="HTML",
             reply_markup=admin_subs_menu(),
@@ -988,7 +988,7 @@ async def cb_sub_pick_product(
     titles = {"grant": "Выдать подписку", "add": "Добавить дни", "remove": "Снять дни"}
     if cb.message:
         await cb.message.answer(
-            f"<b>▪️ {titles[action]}</b>\n\nВыбери продукт:",
+            f"<b>• {titles[action]}</b>\n\nВыбери продукт:",
             parse_mode="HTML",
             reply_markup=admin_pick_product(action),
         )
@@ -1124,7 +1124,7 @@ async def msg_sub_apply(
         product = ProductKind(product_str)
     except (ValueError, TypeError):
         await state.clear()
-        await msg.answer("▫️ Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
+        await msg.answer("· Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
         return
 
     from app.repos import subscriptions as subs_repo
@@ -1166,7 +1166,7 @@ async def msg_sub_apply(
         elif days < 0:
             await msg.bot.send_message(
                 uid,
-                f"▪️ Админ изменил твою подписку <b>{product.value}</b>: {days} дн.\n"
+                f"• Админ изменил твою подписку <b>{product.value}</b>: {days} дн.\n"
                 f"Действует до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
                 parse_mode="HTML",
             )
@@ -1225,7 +1225,7 @@ async def msg_sub_revoke_apply(
         sub.expires_at = now_utc()
         await session.commit()
         await msg.answer(
-            f"▪️ Подписка <b>{product.value}</b> у <code>{uid}</code> отозвана.",
+            f"• Подписка <b>{product.value}</b> у <code>{uid}</code> отозвана.",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1279,19 +1279,19 @@ async def msg_user_info_apply(
     subs = await subs_repo.list_for_user(session, uid)
     lines = [
         f"<b>Юзер</b> <code>{target.id}</code>",
-        f"▪️ Имя: {target.first_name or '—'} (@{target.username or '—'})",
-        f"▪️ Админ: {target.is_admin} · Бан: {target.is_blocked}",
-        f"▪️ XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
+        f"• Имя: {target.first_name or '—'} (@{target.username or '—'})",
+        f"• Админ: {target.is_admin} · Бан: {target.is_blocked}",
+        f"• XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
         "",
         "<b>Подписки:</b>",
     ]
     if subs:
         for s in subs:
             lines.append(
-                f"  ▪️ {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}"
+                f"  • {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}"
             )
     else:
-        lines.append("  ▫️ нет")
+        lines.append("  · нет")
     await msg.answer(
         "\n".join(lines), parse_mode="HTML", reply_markup=admin_back()
     )
@@ -1309,7 +1309,7 @@ async def cb_coupons_menu(
         return
     if cb.message:
         await cb.message.answer(
-            "<b>▪️ Купоны</b>\n\n"
+            "<b>• Купоны</b>\n\n"
             "Купоны выдают подписку без оплаты. Юзер вводит код в /menu → Купить → «У меня купон».",
             parse_mode="HTML",
             reply_markup=admin_coupons_menu(),
@@ -1403,7 +1403,7 @@ async def msg_coupon_params(
         product = ProductKind(data.get("coupon_product", ""))
     except ValueError:
         await state.clear()
-        await msg.answer("▫️ Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
+        await msg.answer("· Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
         return
     tier = data.get("coupon_tier") or "std"
 
@@ -1423,7 +1423,7 @@ async def msg_coupon_params(
     await msg.answer(
         "<b>✓ Купон создан</b>\n\n"
         f"🖤 Код: <code>{cp.code}</code>\n"
-        f"▪️ Продукт: <b>{label}</b>\n"
+        f"• Продукт: <b>{label}</b>\n"
         f"◷ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
         f"🔢 Активаций: <b>{max_uses}</b>\n"
         f"⌛ Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)",
@@ -1512,7 +1512,7 @@ async def cb_shards_menu(
         return
     if cb.message:
         await cb.message.answer(
-            "<b>▪️ Шарды</b>\n\nShard = отдельный Render-аккаунт, на котором крутятся "
+            "<b>• Шарды</b>\n\nShard = отдельный Render-аккаунт, на котором крутятся "
             "тенанты. Для добавления нужен Render API key с GitHub-OAuth-аккаунта.",
             parse_mode="HTML",
             reply_markup=admin_shards_menu(),
@@ -1775,7 +1775,7 @@ async def cb_export_menu(
         return
     if cb.message:
         await cb.message.answer(
-            "<b>▪️ Экспорт данных</b>\n\n"
+            "<b>• Экспорт данных</b>\n\n"
             "Скачать конфиги тенантов одним архивом. Доступно только главному админу.",
             parse_mode="HTML",
             reply_markup=admin_export_menu(),
@@ -1817,7 +1817,7 @@ async def msg_export_user_apply(
     data = await _zip_for_user(target)
     if data is None:
         await msg.answer(
-            "▫️ У юзера нет инстансов или каталоги пусты.",
+            "· У юзера нет инстансов или каталоги пусты.",
             reply_markup=admin_back(),
         )
         await state.clear()
@@ -1827,7 +1827,7 @@ async def msg_export_user_apply(
     fname = f"miihost_user{target}.zip"
     await msg.answer_document(
         BufferedInputFile(data, filename=fname),
-        caption=f"▪️ Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
+        caption=f"• Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
         parse_mode="HTML",
     )
     await state.clear()
@@ -1860,7 +1860,7 @@ async def cb_export_all_btn(
         instances = list(res.scalars())
         if not instances:
             await cb.message.answer(
-                "▫️ Нет активных инстансов.", reply_markup=admin_back()
+                "· Нет активных инстансов.", reply_markup=admin_back()
             )
             await cb.answer()
             return
@@ -1901,7 +1901,7 @@ async def cb_export_all_btn(
 
         await cb.message.answer_document(
             BufferedInputFile(data, filename="mihost_export_all.zip"),
-            caption=f"▪️ Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
+            caption=f"• Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
             parse_mode="HTML",
         )
     await cb.answer()

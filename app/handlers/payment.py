@@ -67,11 +67,11 @@ async def cb_buy_menu(cb: CallbackQuery, state: FSMContext) -> None:
         generate_all()
     text = (
         "<b>Выбери что хостить</b>\n\n"
-        f"▪️ <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
+        f"• <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
         "    автозапуск, авторестарт, смена golden_key прямо в боте\n\n"
-        f"▪️ <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
+        f"• <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
         "    .zip с твоим Python-проектом, автоанализ + автодеплой\n\n"
-        "▫️ Сначала соберём настройки, потом выставлю счёт."
+        "· Сначала соберём настройки, потом выставлю счёт."
     )
     if cb.message:
         try:
@@ -301,14 +301,14 @@ async def _show_summary(
         tg_bot_id = (data.get("tg_token", "").split(":") or [""])[0]
         pw_plain = data.get("tg_pw_plain", "")
         pw_line = (
-            f"▪️ Пароль для входа в ТГ-бота: <code>{pw_plain}</code>\n"
+            f"• Пароль для входа в ТГ-бота: <code>{pw_plain}</code>\n"
             f"    <i>(сохрани — покажу один раз)</i>\n"
             if pw_plain else ""
         )
         details = (
-            f"▪️ Cardinal · 30 дней\n"
-            f"▪️ golden_key: <code>***{data['golden_key'][-4:]}</code>\n"
-            f"▪️ Telegram-бот: <code>{tg_bot_id}</code>\n"
+            f"• Cardinal · 30 дней\n"
+            f"• golden_key: <code>***{data['golden_key'][-4:]}</code>\n"
+            f"• Telegram-бот: <code>{tg_bot_id}</code>\n"
             f"{pw_line}"
         )
     else:
@@ -318,16 +318,16 @@ async def _show_summary(
             else settings.script_std_ram_mb
         )
         details = (
-            f"▪️ Кастом-скрипт · {tier.upper()} · {ram} MB\n"
-            f"▪️ Архив: <code>{data['zip_name']}</code> · {size_kb} KB\n"
-            f"▪️ Срок: 30 дней\n"
+            f"• Кастом-скрипт · {tier.upper()} · {ram} MB\n"
+            f"• Архив: <code>{data['zip_name']}</code> · {size_kb} KB\n"
+            f"• Срок: 30 дней\n"
         )
     text = (
         "<b>Проверь заказ</b>\n\n"
         f"{details}\n"
         f"<b>К оплате: {price} ₽</b>\n\n"
         "Оплата только в <b>USDT через CryptoBot</b>.\n"
-        "Хочешь другой криптой → жми «▫️ Другая крипта → саппорт» на следующем экране, "
+        "Хочешь другой криптой → жми «· Другая крипта → саппорт» на следующем экране, "
         "или сразу пиши в <a href=\"tg://user?id={admin}\">саппорт</a>.\n\n"
         "Есть бесплатный купон? Жми «У меня купон»."
     ).format(admin=settings.admin_ids_list[0] if settings.admin_ids_list else 0)
@@ -395,10 +395,10 @@ async def cb_buy_invoice(
 
     text = (
         "<b>Счёт</b>\n\n"
-        f"▪️ Продукт: <b>{product.value}</b>\n"
-        f"▪️ Сумма: <b>{price} ₽</b> ≈ {invoice.get('amount')} {invoice.get('asset')}\n\n"
-        "▫️ Оплата только в USDT через @CryptoBot.\n"
-        "▫️ Другая крипта (TON/BTC/ETH/…) → жми кнопку «▫️ Другая крипта → саппорт».\n\n"
+        f"• Продукт: <b>{product.value}</b>\n"
+        f"• Сумма: <b>{price} ₽</b> ≈ {invoice.get('amount')} {invoice.get('asset')}\n\n"
+        "· Оплата только в USDT через @CryptoBot.\n"
+        "· Другая крипта (TON/BTC/ETH/…) → жми кнопку «· Другая крипта → саппорт».\n\n"
         "После оплаты — нажми «Я оплатил» или дождись авто-проверки."
     )
     pay_url = invoice.get("pay_url") or invoice.get("bot_invoice_url")
@@ -488,7 +488,7 @@ async def _redeem_coupon_and_provision(
 ) -> None:
     ok, message, coupon = await coupons_repo.redeem(session, code, user.id)
     if not ok or not coupon:
-        await msg.answer(f"▫️ {message}")
+        await msg.answer(f"· {message}")
         return
     if product_str:
         try:
@@ -497,7 +497,7 @@ async def _redeem_coupon_and_provision(
             picked = coupon.product
         if coupon.product != picked:
             await msg.answer(
-                f"▫️ Купон на <b>{coupon.product.value}</b>, а ты покупал "
+                f"· Купон на <b>{coupon.product.value}</b>, а ты покупал "
                 f"<b>{picked.value}</b>. Начни заново через /menu → 🖤 Купить.",
                 parse_mode="HTML",
             )
@@ -534,13 +534,13 @@ async def _redeem_coupon_and_provision(
     except Exception as exc:  # noqa: BLE001
         logger.exception("provision after coupon failed")
         await msg.answer(
-            f"▫️ Подписка активна, но запуск сервера упал: {exc}\n"
+            f"· Подписка активна, но запуск сервера упал: {exc}\n"
             "Напиши /support — поможем.",
         )
     if provisioned:
         pw_plain = merged_data.get("tg_pw_plain", "")
         pw_line = (
-            f"\n▪️ Пароль от Telegram-бота Cardinal: <code>{pw_plain}</code>\n"
+            f"\n• Пароль от Telegram-бота Cardinal: <code>{pw_plain}</code>\n"
             "<i>Сохрани — показываю один раз.</i>"
             if product == ProductKind.CARDINAL and pw_plain
             else ""
@@ -662,12 +662,12 @@ def _kickoff_hint(product: ProductKind) -> str:
     """Standard message shown after payment/coupon success."""
     if product == ProductKind.CARDINAL:
         return (
-            "▪️ Бот Cardinal запустится в течение ~5 минут.\n"
+            "• Бот Cardinal запустится в течение ~5 минут.\n"
             "Как только будет готов — напиши своему Telegram-боту "
             "<code>/start</code> и залогинься паролем, который я показал выше."
         )
     return (
-        "▪️ Твой скрипт запустится в течение ~5 минут.\n"
+        "• Твой скрипт запустится в течение ~5 минут.\n"
         "Следить за состоянием: /menu → ▣ Мои серверы."
     )
 
