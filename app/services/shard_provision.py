@@ -13,6 +13,29 @@ logger = logging.getLogger(__name__)
 GITHUB_REPO_URL = "https://github.com/Ramkens/mi-host-bot"
 
 
+async def _master_external_db_url() -> str:
+    """Fetch master's Postgres EXTERNAL connection string.
+
+    Workers live on different Render accounts, so the internal short
+    hostname (e.g. ``dpg-...-a``) won't resolve for them. We need the
+    full FQDN form (``dpg-...-a.<region>-postgres.render.com``) with
+    SSL enabled.
+    """
+    rc_master = RenderClient(api_key=settings.render_api_key)
+    dbs = await rc_master.list_postgres()
+    if not dbs:
+        raise RuntimeError("no postgres on master account")
+    db_id = dbs[0].get("id")
+    info = await rc_master._req("GET", f"/postgres/{db_id}/connection-info")
+    ext = info.get("externalConnectionString") or ""
+    # Normalize to asyncpg form.
+    if ext.startswith("postgresql://"):
+        ext = ext.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # asyncpg uses `ssl=require` style; Render returns `?ssl=true` which
+    # asyncpg also accepts. Leave as-is if present.
+    return ext
+
+
 async def provision_worker(
     session, shard_id: int, *, repo_url: str = GITHUB_REPO_URL
 ) -> dict:
@@ -34,6 +57,12 @@ async def provision_worker(
     if shard.owner_id != owner_id:
         await shards_repo.update_service_meta(session, shard_id, owner_id=owner_id)
 
+    try:
+        master_db_url = await _master_external_db_url()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not resolve master external DB URL")
+        return {"ok": False, "reason": f"master DB URL: {exc}"}
+
     env_vars = {
         "MIHOST_ROLE": "worker",
         "MIHOST_SHARD_NAME": shard.name,
@@ -42,7 +71,7 @@ async def provision_worker(
         "PYTHON_VERSION": "3.11.9",
         # Workers share the master's data store. SECRET_KEY must match so
         # they can decrypt shard rows (they don't, but other secrets too).
-        "DATABASE_URL": settings.database_url,
+        "DATABASE_URL": master_db_url,
         "SECRET_KEY": settings.secret_key,
         # No bot token / webhook on workers — they're headless.
         "BOT_TOKEN": "",
