@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.models import Instance, ProductKind, Shard, ShardStatus
+from app.db.models import Instance, InstanceStatus, ProductKind, Shard, ShardStatus
 
 
 async def free_cardinal_slots(session: AsyncSession) -> int:
@@ -27,7 +27,7 @@ async def free_cardinal_slots(session: AsyncSession) -> int:
     res = await session.execute(
         select(func.count(Instance.id)).where(
             Instance.product == ProductKind.CARDINAL,
-            Instance.desired_state == "live",
+            Instance.status != InstanceStatus.DELETED,
         )
     )
     live_cardinals = int(res.scalar_one() or 0)
@@ -49,7 +49,7 @@ async def free_script_slots(session: AsyncSession) -> int:
     res = await session.execute(
         select(func.count(Instance.id)).where(
             Instance.product == ProductKind.SCRIPT,
-            Instance.desired_state == "live",
+            Instance.status != InstanceStatus.DELETED,
         )
     )
     live_scripts = int(res.scalar_one() or 0)
