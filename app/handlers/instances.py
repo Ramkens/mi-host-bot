@@ -24,6 +24,9 @@ router = Router(name="instances")
 
 class SetupFSM(StatesGroup):
     awaiting_golden_key = State()
+    awaiting_tg_token = State()
+    awaiting_tg_password = State()
+    awaiting_proxy = State()
     awaiting_zip = State()
 
 
@@ -264,10 +267,12 @@ async def cb_inst_setup(
         await state.set_state(SetupFSM.awaiting_golden_key)
         if cb.message:
             await cb.message.answer(
-                "🔑 Пришли <code>golden_key</code> одним сообщением — "
-                "сервер запустится сразу.\n\n"
+                "<b>💠 Настройка Cardinal · Шаг 1/4</b>\n\n"
+                "Пришли <code>golden_key</code> (32 символа) от FunPay. "
+                "Удалю из чата сразу после получения.\n\n"
                 "<i>Где взять:</i> funpay.com → DevTools → Application → "
                 "Cookies → <code>golden_key</code>.\n\n"
+                "Дальше: Telegram-бот → пароль → прокси.\n"
                 "/cancel — отмена.",
                 parse_mode="HTML",
             )
@@ -292,9 +297,120 @@ async def setup_receive_key(
         await state.clear()
         await msg.answer("Отменено.")
         return
-    if len(text) < 20:
-        await msg.answer("Ключ выглядит некорректно. Пришли golden_key целиком.")
+    if len(text) != 32:
+        await msg.answer(
+            "❌ golden_key должен быть 32 символа. Скопируй cookie с funpay.com целиком."
+        )
         return
+    await state.update_data(setup_golden_key=text)
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await state.set_state(SetupFSM.awaiting_tg_token)
+    await msg.answer(
+        "<b>Шаг 2/4 · Telegram-бот Cardinal</b>\n\n"
+        "Пришли токен Telegram-бота (@BotFather → /newbot) — Cardinal будет "
+        "слать через него уведомления и принимать команды.\n\n"
+        "Если не нужен — отправь <code>-</code>.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(SetupFSM.awaiting_tg_token)
+async def setup_receive_tg_token(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import validate_tg_token
+
+    raw = (msg.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    if raw == "-" or raw == "":
+        await state.update_data(setup_tg_token="", setup_tg_pw_hash="")
+        await state.set_state(SetupFSM.awaiting_proxy)
+        await msg.answer(
+            "<b>Шаг 4/4 · IPv4-прокси</b>\n\n"
+            "<code>scheme://login:pass@ip:port</code>, "
+            "<code>login:pass@ip:port</code> или <code>ip:port</code>.\n"
+            "Не нужно — <code>-</code>.",
+            parse_mode="HTML",
+        )
+        return
+    if not validate_tg_token(raw):
+        await msg.answer(
+            "❌ Токен не похож на настоящий. Формат: <code>123456:ABC-DEF...</code>.",
+            parse_mode="HTML",
+        )
+        return
+    await state.update_data(setup_tg_token=raw)
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await state.set_state(SetupFSM.awaiting_tg_password)
+    await msg.answer(
+        "<b>Шаг 3/4 · Пароль Cardinal</b>\n\n"
+        "Придумай пароль для входа в Telegram-бота Cardinal. "
+        "≥8 символов, заглавные + строчные буквы, минимум одна цифра.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(SetupFSM.awaiting_tg_password)
+async def setup_receive_tg_password(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import hash_password, validate_password
+
+    pw = (msg.text or "").strip()
+    if pw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    ok, err = validate_password(pw)
+    if not ok:
+        await msg.answer(f"❌ {err}")
+        return
+    await state.update_data(setup_tg_pw_hash=hash_password(pw))
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await state.set_state(SetupFSM.awaiting_proxy)
+    await msg.answer(
+        "<b>Шаг 4/4 · IPv4-прокси (опционально)</b>\n\n"
+        "<code>scheme://login:pass@ip:port</code>, "
+        "<code>login:pass@ip:port</code> или <code>ip:port</code>.\n"
+        "Не нужно — <code>-</code>.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(SetupFSM.awaiting_proxy)
+async def setup_receive_proxy(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import validate_proxy
+
+    raw = (msg.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    proxy = ""
+    if raw not in {"-", ""}:
+        ok, normalized = validate_proxy(raw)
+        if not ok:
+            await msg.answer(
+                "❌ Неверный формат прокси. Или отправь <code>-</code>.",
+                parse_mode="HTML",
+            )
+            return
+        proxy = normalized
+
     data = await state.get_data()
     inst_id = data.get("setup_inst_id")
     if not inst_id:
@@ -304,20 +420,34 @@ async def setup_receive_key(
     if not inst or inst.user_id != user.id:
         await state.clear()
         return
+    gk = data.get("setup_golden_key") or (inst.config or {}).get("golden_key") or ""
+    tg_token = data.get("setup_tg_token", "") or ""
+    tg_pw_hash = data.get("setup_tg_pw_hash", "") or ""
     try:
         await msg.delete()
     except Exception:  # noqa: BLE001
         pass
-    inst.config = {**(inst.config or {}), "golden_key": text}
+    inst.config = {
+        **(inst.config or {}),
+        "golden_key": gk,
+        "tg_token": tg_token,
+        "tg_secret_hash": tg_pw_hash,
+        "proxy": proxy,
+    }
     inst.status = InstanceStatus.DEPLOYING
     inst.desired_state = "live"
     await session.flush()
-    # Direct-start (master-hosted tenants); worker-hosted ones reconcile async.
     if inst.shard_id is None:
         try:
             from app.services.cardinal import start_tenant
 
-            await start_tenant(inst.id, golden_key=text)
+            await start_tenant(
+                inst.id,
+                golden_key=gk,
+                telegram_token=tg_token,
+                secret_key_hash=tg_pw_hash or None,
+                proxy=proxy,
+            )
             inst.status = InstanceStatus.LIVE
             inst.actual_state = "live"
         except Exception:  # noqa: BLE001

@@ -238,4 +238,62 @@ def merge_overrides(
     return out
 
 
-__all__ = ("default_main_cfg", "render_main_cfg", "merge_overrides")
+TG_TOKEN_RE = __import__("re").compile(r"^\d{6,}:[A-Za-z0-9_-]{30,}$")
+
+_PROXY_RE = __import__("re").compile(
+    r"^(?:(?P<scheme>socks5h?|socks4|http|https)://)?"
+    r"(?:(?P<login>[^:@\s]+):(?P<password>[^@\s]*)@)?"
+    r"(?P<host>[A-Za-z0-9\.\-]+):(?P<port>\d{2,5})$"
+)
+
+
+def validate_tg_token(token: str) -> bool:
+    return bool(TG_TOKEN_RE.match(token.strip()))
+
+
+def validate_proxy(proxy: str) -> tuple[bool, str]:
+    """Returns (ok, normalized) where normalized is the canonical form
+    Cardinal stores in ``_main.cfg`` (scheme://login:password@host:port)."""
+    s = proxy.strip()
+    if not s:
+        return False, ""
+    m = _PROXY_RE.match(s)
+    if not m:
+        return False, ""
+    scheme = m.group("scheme") or "http"
+    host = m.group("host")
+    port = m.group("port")
+    login = m.group("login")
+    password = m.group("password") or ""
+    if login:
+        return True, f"{scheme}://{login}:{password}@{host}:{port}"
+    return True, f"{scheme}://{host}:{port}"
+
+
+def validate_password(pw: str) -> tuple[bool, str]:
+    """Cardinal's own policy: ≥8 chars, mixed case, at least one digit."""
+    if len(pw) < 8:
+        return False, "Пароль должен быть ≥ 8 символов."
+    if pw.lower() == pw or pw.upper() == pw:
+        return False, "В пароле нужны и заглавные, и строчные буквы."
+    if not any(c.isdigit() for c in pw):
+        return False, "В пароле нужна хотя бы одна цифра."
+    return True, ""
+
+
+def hash_password(pw: str) -> str:
+    """Same hash format Cardinal expects (``bcrypt``)."""
+    import bcrypt
+
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+__all__ = (
+    "default_main_cfg",
+    "render_main_cfg",
+    "merge_overrides",
+    "validate_tg_token",
+    "validate_proxy",
+    "validate_password",
+    "hash_password",
+)

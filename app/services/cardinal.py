@@ -82,18 +82,40 @@ def _write_main_cfg(
     *,
     golden_key: str,
     user_agent: str = "",
+    telegram_token: str = "",
+    secret_key_hash: Optional[str] = None,
+    proxy: str = "",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> None:
     """(Re)write ``configs/_main.cfg`` from the default + user overrides."""
     cfg_dir = tenant_dir / "configs"
     cfg_dir.mkdir(exist_ok=True)
-    base = default_main_cfg(golden_key=golden_key, user_agent=user_agent)
+    kwargs: dict[str, Any] = {
+        "golden_key": golden_key,
+        "user_agent": user_agent,
+        "telegram_token": telegram_token,
+        "telegram_enabled": bool(telegram_token),
+        "proxy": proxy,
+    }
+    if secret_key_hash:
+        kwargs["secret_key_hash"] = secret_key_hash
+    base = default_main_cfg(**kwargs)
     sections = merge_overrides(base, overrides)
-    # Make sure golden_key/user_agent in [FunPay] always reflect the
-    # latest values, even if the user-supplied override forgot them.
+    # Ensure live values survive user-supplied overrides that may have
+    # forgotten them.
     sections.setdefault("FunPay", {})["golden_key"] = golden_key
     if user_agent:
         sections["FunPay"]["user_agent"] = user_agent
+    if telegram_token:
+        sections.setdefault("Telegram", {})
+        sections["Telegram"]["token"] = telegram_token
+        sections["Telegram"]["enabled"] = "1"
+        if secret_key_hash:
+            sections["Telegram"]["secretKeyHash"] = secret_key_hash
+    if proxy:
+        sections.setdefault("Proxy", {})
+        sections["Proxy"]["proxy"] = proxy
+        sections["Proxy"]["enable"] = "1"
     (cfg_dir / "_main.cfg").write_text(render_main_cfg(sections), encoding="utf-8")
     # Cardinal also expects two empty optional configs; create if missing.
     for fname in ("auto_response.cfg", "auto_delivery.cfg"):
@@ -107,6 +129,9 @@ async def provision_tenant(
     *,
     golden_key: str,
     user_agent: Optional[str] = None,
+    telegram_token: str = "",
+    secret_key_hash: Optional[str] = None,
+    proxy: str = "",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> Path:
     cache = await ensure_cardinal_cache()
@@ -126,6 +151,9 @@ async def provision_tenant(
         tenant_dir,
         golden_key=golden_key,
         user_agent=user_agent or "",
+        telegram_token=telegram_token,
+        secret_key_hash=secret_key_hash,
+        proxy=proxy,
         overrides=overrides,
     )
     # Mi Host shim that re-applies env-driven golden_key on every restart.
@@ -173,10 +201,18 @@ async def start_tenant(
     instance_id: int,
     *,
     golden_key: str,
+    telegram_token: str = "",
+    secret_key_hash: Optional[str] = None,
+    proxy: str = "",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> dict[str, Any]:
     tenant_dir = await provision_tenant(
-        instance_id, golden_key=golden_key, overrides=overrides
+        instance_id,
+        golden_key=golden_key,
+        telegram_token=telegram_token,
+        secret_key_hash=secret_key_hash,
+        proxy=proxy,
+        overrides=overrides,
     )
     spec = TenantSpec(
         instance_id=instance_id,
