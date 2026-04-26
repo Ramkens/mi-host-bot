@@ -165,36 +165,36 @@ async def provision_tenant(
 # Shim runs inside the tenant process. It re-injects ``GOLDEN_KEY`` into
 # ``configs/_main.cfg`` (preserving every other section the user may have
 # customized) and then hands control to Cardinal's ``main.py``.
-_SHIM_PY = """\
-'''Mi Host bootstrap for Cardinal: refresh golden_key from env, then run.'''
-import codecs, os, runpy, sys
-from configparser import ConfigParser
-from pathlib import Path
-
-cfg_path = Path(__file__).parent / 'configs' / '_main.cfg'
-key = os.environ.get('GOLDEN_KEY', '')
-ua = os.environ.get('USER_AGENT', '')
-if cfg_path.exists() and key:
- cp = ConfigParser(delimiters=(':',), interpolation=None)
- cp.optionxform = str
- cp.read_file(codecs.open(str(cfg_path), 'r', 'utf8'))
- if not cp.has_section('FunPay'):
- cp.add_section('FunPay')
- cp.set('FunPay', 'golden_key', key)
- if ua:
- cp.set('FunPay', 'user_agent', ua)
- with cfg_path.open('w', encoding='utf-8') as f:
- cp.write(f, space_around_delimiters=True)
-
-sys.argv = ['main.py']
-try:
- runpy.run_path('main.py', run_name='__main__')
-except SystemExit:
- raise
-except Exception as exc:
- print(f'[mihost] cardinal crashed: {exc!r}')
- raise
-"""
+_SHIM_PY = (
+    "'''Mi Host bootstrap for Cardinal: refresh golden_key from env, then run.'''\n"
+    "import codecs, os, runpy, sys\n"
+    "from configparser import ConfigParser\n"
+    "from pathlib import Path\n"
+    "\n"
+    "cfg_path = Path(__file__).parent / 'configs' / '_main.cfg'\n"
+    "key = os.environ.get('GOLDEN_KEY', '')\n"
+    "ua = os.environ.get('USER_AGENT', '')\n"
+    "if cfg_path.exists() and key:\n"
+    "    cp = ConfigParser(delimiters=(':',), interpolation=None)\n"
+    "    cp.optionxform = str\n"
+    "    cp.read_file(codecs.open(str(cfg_path), 'r', 'utf8'))\n"
+    "    if not cp.has_section('FunPay'):\n"
+    "        cp.add_section('FunPay')\n"
+    "    cp.set('FunPay', 'golden_key', key)\n"
+    "    if ua:\n"
+    "        cp.set('FunPay', 'user_agent', ua)\n"
+    "    with cfg_path.open('w', encoding='utf-8') as f:\n"
+    "        cp.write(f, space_around_delimiters=True)\n"
+    "\n"
+    "sys.argv = ['main.py']\n"
+    "try:\n"
+    "    runpy.run_path('main.py', run_name='__main__')\n"
+    "except SystemExit:\n"
+    "    raise\n"
+    "except Exception as exc:\n"
+    "    print(f'[mihost] cardinal crashed: {exc!r}')\n"
+    "    raise\n"
+)
 
 
 async def start_tenant(
@@ -291,10 +291,31 @@ async def write_user_main_cfg(instance_id: int, raw: str) -> tuple[bool, str]:
     return True, f"_main.cfg updated ({len(cp2.sections())} sections)."
 
 
-def remove_tenant_dir(instance_id: int) -> None:
-    """Wipe the tenant's working directory (used on purge / unsubscribe)."""
+def remove_tenant_dir(instance_id: int) -> int:
+    """Wipe the tenant's working directory and return the number of bytes freed.
+
+    Errors during rmtree are logged (not silently swallowed) so a stuck
+    file descriptor or permission problem actually surfaces in our logs.
+    """
     tenant_dir = _tenant_dir(instance_id)
-    shutil.rmtree(tenant_dir, ignore_errors=True)
+    if not tenant_dir.exists():
+        return 0
+    freed = 0
+    try:
+        for p in tenant_dir.rglob("*"):
+            try:
+                if p.is_file() or p.is_symlink():
+                    freed += p.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+    def _onerr(func, path, exc_info):
+        logger.warning("remove_tenant_dir: %s on %s: %s", func.__name__, path, exc_info[1])
+
+    shutil.rmtree(tenant_dir, onerror=_onerr)
+    return freed
 
 
 async def write_user_aux_cfg(

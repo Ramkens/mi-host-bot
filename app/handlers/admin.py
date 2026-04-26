@@ -2139,25 +2139,27 @@ async def _host_act(
         msg = "Перезапускаю."
     elif verb == "drop":
         try:
-            await supervisor.stop(inst.id)
+            await supervisor.remove(inst.id)
         except Exception:
-            pass
+            logger.exception("drop: supervisor.remove failed")
+        freed = 0
         if inst.product == ProductKind.CARDINAL:
             try:
                 from app.services.cardinal import remove_tenant_dir
 
-                remove_tenant_dir(inst.id)
+                freed = remove_tenant_dir(inst.id) or 0
             except Exception:
                 logger.exception("drop cardinal dir failed")
         else:
             try:
                 from app.services.script_host import remove as remove_script
 
-                remove_script(inst.id)
+                freed = remove_script(inst.id) or 0
             except Exception:
                 logger.exception("drop script dir failed")
         inst.status = _St.DELETED
-        msg = "Удалил."
+        inst.actual_state = "deleted"
+        msg = f"Удалил. Освобождено {freed // 1024} KB."
     else:
         msg = "?"
     await session.commit()

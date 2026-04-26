@@ -554,3 +554,87 @@ async def setup_receive_zip(
 @router.message(SetupFSM.awaiting_zip)
 async def setup_reject_non_zip(msg: Message) -> None:
     await msg.answer("Пришли .zip как документ.")
+
+
+@router.callback_query(F.data.startswith("inst:drop:ask:"))
+async def cb_drop_ask(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    if cb.message:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Да, удалить", callback_data=f"inst:drop:yes:{inst.id}"
+                    ),
+                    InlineKeyboardButton(
+                        text="Отмена", callback_data=f"inst:open:{inst.id}"
+                    ),
+                ]
+            ]
+        )
+        try:
+            await cb.message.edit_text(
+                f"<b>Удалить сервер #{inst.id}?</b>\n\n"
+                f"Файлы инстанса будут стёрты с диска. Подписка сохранится — "
+                f"можешь потом залить новый конфиг.",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            await cb.message.answer(
+                f"<b>Удалить сервер #{inst.id}?</b>",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("inst:drop:yes:"))
+async def cb_drop_confirm(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    try:
+        await supervisor.remove(inst.id)
+    except Exception:
+        pass
+    freed = 0
+    if inst.product == ProductKind.CARDINAL:
+        try:
+            freed = remove_tenant_dir(inst.id) or 0
+        except Exception:
+            pass
+    else:
+        try:
+            freed = remove_script(inst.id) or 0
+        except Exception:
+            pass
+    inst.status = InstanceStatus.DELETED
+    inst.actual_state = "deleted"
+    await session.commit()
+    if cb.message:
+        try:
+            await cb.message.edit_text(
+                f"Сервер #{inst.id} удалён. Освобождено {freed // 1024} KB.",
+                parse_mode="HTML",
+                reply_markup=back_to_menu(),
+            )
+        except Exception:
+            await cb.message.answer(
+                f"Сервер #{inst.id} удалён. Освобождено {freed // 1024} KB.",
+                parse_mode="HTML",
+                reply_markup=back_to_menu(),
+            )
+    await cb.answer("Удалил.")

@@ -293,5 +293,12 @@ def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
                 ),
             ]
         )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="Удалить сервер", callback_data=f"inst:drop:ask:{instance_id}"
+            ),
+        ]
+    )
     rows.append([InlineKeyboardButton(text="К списку", callback_data="instances")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

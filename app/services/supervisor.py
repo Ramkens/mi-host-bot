@@ -94,9 +94,14 @@ class Supervisor:
 
     async def stop(self, instance_id: int, *, graceful_timeout: float = 10.0) -> None:
         state = self.tenants.get(instance_id)
-        if not state or not state.proc:
+        if not state:
             return
+        # Always mark stop_requested first — otherwise a tenant currently
+        # awaiting restart inside `_wait_and_maybe_restart` would respawn
+        # after we returned, defeating the whole point of stop().
         state.stop_requested = True
+        if not state.proc:
+            return
         proc = state.proc
         try:
             proc.send_signal(signal.SIGTERM)

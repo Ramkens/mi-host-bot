@@ -113,5 +113,27 @@ async def deploy(
     return analysis, spec
 
 
-def remove(instance_id: int) -> None:
-    shutil.rmtree(tenant_dir(instance_id), ignore_errors=True)
+def remove(instance_id: int) -> int:
+    """Wipe a script tenant's working directory and return bytes freed."""
+    import logging
+
+    log = logging.getLogger(__name__)
+    td = tenant_dir(instance_id)
+    if not td.exists():
+        return 0
+    freed = 0
+    try:
+        for p in td.rglob("*"):
+            try:
+                if p.is_file() or p.is_symlink():
+                    freed += p.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+    def _onerr(func, path, exc_info):
+        log.warning("script_host.remove: %s on %s: %s", func.__name__, path, exc_info[1])
+
+    shutil.rmtree(td, onerror=_onerr)
+    return freed
