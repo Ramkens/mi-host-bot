@@ -89,6 +89,7 @@ async def _reconcile_once(shard_id: int) -> None:
             select(Instance).where(Instance.shard_id == shard_id)
         )
         instances = list(res.scalars())
+        await s.commit()
     for inst in instances:
         try:
             running = supervisor.is_running(inst.id)
