@@ -115,6 +115,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Restore tenants in the background.
     asyncio.create_task(_restore_tenants())
 
+    # If a DB rotation just completed, announce "готово".
+    from app.services.db_rotation import announce_done_if_pending
+
+    asyncio.create_task(announce_done_if_pending(bot))
+
     try:
         yield
     finally:

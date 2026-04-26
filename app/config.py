@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     render_owner_id: str = ""
     render_region: str = "frankfurt"
     render_plan: str = "free"
+    # Render injects RENDER_SERVICE_ID into every service automatically.
+    # We use it for self-rotation of the underlying free Postgres.
+    render_service_id: str = ""
+
+    @property
+    def render_service_id_self(self) -> str:
+        return self.render_service_id
 
     # --- cron-job.org ---
     cronjob_api_key: str = ""
