@@ -22,6 +22,22 @@ async def is_admin(session: AsyncSession, user_id: int) -> bool:
     return bool(user and user.is_admin)
 
 
+async def notify_admins(bot, text: str) -> None:
+    """Send a plain-HTML message to every configured admin.
+
+    Used for operational signals (purchase made, sub granted, coupon
+    redeemed, etc.). Failures per-admin are logged but don't propagate.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    for aid in settings.admin_ids_list:
+        try:
+            await bot.send_message(aid, text, parse_mode="HTML")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notify_admins: %s -> %s", aid, exc)
+
+
 async def stats_dashboard(session: AsyncSession) -> dict:
     total_users = await users_repo.total_users(session)
     active_24h = await users_repo.active_users_24h(session)

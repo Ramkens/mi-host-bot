@@ -132,14 +132,14 @@ async def cb_inst_open(
                 "загрузи <code>.zip</code> со скриптом."
             )
     text = (
-        f"<b>▣ Сервер #{inst.id}</b>\n"
+        f"<b> Сервер #{inst.id}</b>\n"
         f"• Продукт: {inst.product.value}{tier_suffix}\n"
         f"⟳ Статус (БД): {_status_icon(inst.status)} {inst.status.value}\n"
-        f"⚙ Процесс: {'жив' if s.get('alive') else 'нет'}\n"
-        f"🧬 PID: {s.get('pid') or '—'}\n"
-        f"◷ Uptime: {s.get('uptime', 0)} сек\n"
+        f" Процесс: {'жив' if s.get('alive') else 'нет'}\n"
+        f" PID: {s.get('pid') or '—'}\n"
+        f" Uptime: {s.get('uptime', 0)} сек\n"
         f"↻ Перезапусков: {s.get('restart_count', 0)}\n"
-        f"☁️ Render service: {inst.render_service_id or '—'}"
+        f" Render service: {inst.render_service_id or '—'}"
         f"{setup_hint}"
     )
     if cb.message:
@@ -414,7 +414,7 @@ async def setup_receive_pw_custom(
         return
     ok, err = validate_password(pw)
     if not ok:
-        await msg.answer(f"✗ {err}\nПопробуй ещё раз.")
+        await msg.answer(f" {err}\nПопробуй ещё раз.")
         return
     await state.update_data(setup_tg_pw_plain=pw, setup_tg_pw_hash=hash_password(pw))
     try:
@@ -466,7 +466,7 @@ async def _setup_finalize_cardinal(
             inst.status = InstanceStatus.FAILED
     await session.commit()
     await msg.answer(
-        f"<b>🖤 Спасибо!</b> Сервер #{inst.id} настроен.\n\n"
+        f"<b> Спасибо!</b> Сервер #{inst.id} настроен.\n\n"
         f"• Пароль от Telegram-бота Cardinal: <code>{tg_pw_plain}</code>\n"
         f"<i>Сохрани — показываю один раз.</i>\n\n"
         f"• Бот запустится в течение ~5 минут.\n"
@@ -538,14 +538,14 @@ async def setup_receive_zip(
         inst.status = InstanceStatus.FAILED
         await session.commit()
         await msg.answer(
-            f"○ Не удалось развернуть: {exc}",
+            f" Не удалось развернуть: {exc}",
             reply_markup=instance_actions(inst.id, inst.product.value),
         )
         await state.clear()
         return
     await session.commit()
     await msg.answer(
-        f"✓ Сервер #{inst.id} настроен и запущен.",
+        f" Сервер #{inst.id} настроен и запущен.",
         reply_markup=instance_actions(inst.id, inst.product.value),
     )
     await state.clear()

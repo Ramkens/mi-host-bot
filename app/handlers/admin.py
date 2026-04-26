@@ -8,7 +8,12 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -212,7 +217,7 @@ async def cmd_add_admin(
         session.add(target)
     else:
         await users_repo.set_admin(session, target_id, True)
-    await msg.answer(f"✓ Админ {target_id} добавлен.")
+    await msg.answer(f" Админ {target_id} добавлен.")
 
 
 @router.message(Command("rmadmin"))
@@ -230,7 +235,7 @@ async def cmd_rm_admin(
         await msg.answer("Нельзя снять админку с себя.")
         return
     await users_repo.set_admin(session, target_id, False)
-    await msg.answer(f"✓ {target_id} больше не админ.")
+    await msg.answer(f" {target_id} больше не админ.")
 
 
 @router.message(AdminFSM.awaiting_new_admin)
@@ -252,7 +257,7 @@ async def receive_new_admin(
         session.add(target)
     else:
         await users_repo.set_admin(session, target_id, True)
-    await msg.answer(f"✓ Админ {target_id} добавлен.")
+    await msg.answer(f" Админ {target_id} добавлен.")
     await state.clear()
 
 
@@ -282,7 +287,7 @@ async def cb_post_now(
     mid = await post_one(cb.bot)
     if cb.message:
         await cb.message.answer(
-            f"✓ Опубликовано (msg_id={mid})" if mid else "Канал не настроен.",
+            f" Опубликовано (msg_id={mid})" if mid else "Канал не настроен.",
             reply_markup=back_to_menu(),
         )
     await cb.answer()
@@ -340,7 +345,7 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     try:
         owner_id = await rc.autodetect_owner()
     except Exception as exc:  # noqa: BLE001
-        await msg.answer(f"✗ API key недействителен: <code>{exc}</code>", parse_mode="HTML")
+        await msg.answer(f" API key недействителен: <code>{exc}</code>", parse_mode="HTML")
         return
     if not owner_id:
         await msg.answer("Не нашёл owner у этого API key.")
@@ -348,7 +353,7 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
 
     existing = await shards_repo.by_name(session, name)
     if existing:
-        await msg.answer(f"✗ Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
+        await msg.answer(f" Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
         return
 
     shard = await shards_repo.create(
@@ -361,7 +366,7 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     await session.commit()
 
     await msg.answer(
-        f"✓ Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
+        f" Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
         f"Деплою воркер на этот аккаунт…",
         parse_mode="HTML",
     )
@@ -375,14 +380,14 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     await session.commit()
     if result.get("ok"):
         await msg.answer(
-            f"⌁ Воркер деплоится: <code>{result.get('service_id')}</code>\n"
+            f" Воркер деплоится: <code>{result.get('service_id')}</code>\n"
             f"URL: {result.get('service_url')}\n\n"
             "Жди ~3 минуты до первого heartbeat.",
             parse_mode="HTML",
         )
     else:
         await msg.answer(
-            f"⚠ Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
+            f" Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
             parse_mode="HTML",
         )
 
@@ -429,7 +434,7 @@ async def cmd_pause_shard(msg: Message, session: AsyncSession, user: User) -> No
         return
     await shards_repo.set_status(session, sh.id, ShardStatus.PAUSED)
     await session.commit()
-    await msg.answer(f"⏸ Шард <b>{sh.name}</b> на паузе.", parse_mode="HTML")
+    await msg.answer(f" Шард <b>{sh.name}</b> на паузе.", parse_mode="HTML")
 
 
 @router.message(Command("resume_shard"))
@@ -449,7 +454,7 @@ async def cmd_resume_shard(msg: Message, session: AsyncSession, user: User) -> N
         return
     await shards_repo.set_status(session, sh.id, ShardStatus.ACTIVE)
     await session.commit()
-    await msg.answer(f"▶ Шард <b>{sh.name}</b> снова активен.", parse_mode="HTML")
+    await msg.answer(f" Шард <b>{sh.name}</b> снова активен.", parse_mode="HTML")
 
 
 @router.message(Command("drop_shard"))
@@ -538,11 +543,11 @@ async def cmd_create_coupon(msg: Message, session: AsyncSession, user: User) -> 
     label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
     await msg.answer(
         "<b>Купон создан</b>\n\n"
-        f"🖤 Код: <code>{cp.code}</code>\n"
+        f" Код: <code>{cp.code}</code>\n"
         f"• Продукт: <b>{label}</b>\n"
-        f"◷ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
-        f"🔢 Активаций: <b>{max_uses}</b>\n"
-        f"⌛ Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)\n\n"
+        f" Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
+        f" Активаций: <b>{max_uses}</b>\n"
+        f" Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)\n\n"
         "Юзер вводит этот код в /menu → Купить → « У меня купон».",
         parse_mode="HTML",
     )
@@ -637,14 +642,14 @@ async def cmd_grant_sub(msg: Message, session: AsyncSession, user: User) -> None
     await _ensure_placeholder_instance(session, uid, product)
     await session.commit()
     await msg.answer(
-        f"✓ Юзеру <code>{uid}</code> выдана подписка <b>{product.value}</b> до "
+        f" Юзеру <code>{uid}</code> выдана подписка <b>{product.value}</b> до "
         f"<code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code> (+{days} дн.)",
         parse_mode="HTML",
     )
     try:
         await msg.bot.send_message(
             uid,
-            f"✓ Админ выдал тебе подписку <b>{product.value}</b> на {days} дн.\n"
+            f" Админ выдал тебе подписку <b>{product.value}</b> на {days} дн.\n"
             f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.\n\n"
             "Заходи в /menu → Мои серверы → Настроить.",
             parse_mode="HTML",
@@ -1144,13 +1149,30 @@ async def msg_sub_apply(
     if days > 0:
         await _ensure_placeholder_instance(session, uid, product, tier)
     await session.commit()
-    label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
+    label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
     await msg.answer(
-        f"✓ Готово. Юзер <code>{uid}</code> · <b>{label}</b> · "
+        f"Готово. Юзер <code>{uid}</code> · <b>{label}</b> · "
         f"{days:+d} дн → активно до <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code>.",
         parse_mode="HTML",
         reply_markup=admin_back(),
     )
+    if days > 0:
+        # Notify the rest of the admins so everyone sees grants.
+        from app.db.models import User as _User
+        from app.services.admin import notify_admins
+
+        target = await session.get(_User, uid)
+        who = (target.first_name if target else str(uid)) or str(uid)
+        uname = f"@{target.username}" if (target and target.username) else ""
+        await notify_admins(
+            msg.bot,
+            "<b>Админ выдал подписку</b>\n"
+            f"Пользователь: <code>{uid}</code> {who} {uname}".strip()
+            + f"\nПродукт: <b>{label}</b>"
+            + f"\nИсточник: admin-grant"
+            + f"\nСрок: +{days} дн"
+            + f"\nДействует до: {sub.expires_at.strftime('%Y-%m-%d %H:%M')}",
+        )
     try:
         if days > 0:
             await msg.bot.send_message(
@@ -1356,7 +1378,7 @@ async def cb_coupon_pick_product(
     label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
     if cb.message:
         await cb.message.answer(
-            f"<b>🎟️ Купон · {label}</b>\n\n"
+            f"<b> Купон · {label}</b>\n\n"
             "Пришли параметры одной строкой:\n"
             "<code>&lt;hours&gt; [max_uses] [valid_hours]</code>\n\n"
             "• <b>hours</b> — сколько часов подписки даёт одна активация\n"
@@ -1422,11 +1444,11 @@ async def msg_coupon_params(
     label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
     await msg.answer(
         "<b>Купон создан</b>\n\n"
-        f"🖤 Код: <code>{cp.code}</code>\n"
+        f" Код: <code>{cp.code}</code>\n"
         f"• Продукт: <b>{label}</b>\n"
-        f"◷ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
-        f"🔢 Активаций: <b>{max_uses}</b>\n"
-        f"⌛ Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)",
+        f" Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
+        f" Активаций: <b>{max_uses}</b>\n"
+        f" Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)",
         parse_mode="HTML",
         reply_markup=admin_back(),
     )
@@ -1607,7 +1629,7 @@ async def msg_shard_add_apply(
         owner_id = await rc.autodetect_owner()
     except Exception as exc:  # noqa: BLE001
         await msg.answer(
-            f"✗ API key недействителен: <code>{exc}</code>",
+            f" API key недействителен: <code>{exc}</code>",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1620,7 +1642,7 @@ async def msg_shard_add_apply(
     existing = await shards_repo.by_name(session, name)
     if existing:
         await msg.answer(
-            f"✗ Шард <b>{name}</b> уже есть.",
+            f" Шард <b>{name}</b> уже есть.",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1632,7 +1654,7 @@ async def msg_shard_add_apply(
     )
     await session.commit()
     await msg.answer(
-        f"✓ Шард <b>{name}</b> зарегистрирован (id={shard.id}). Деплою воркер…",
+        f" Шард <b>{name}</b> зарегистрирован (id={shard.id}). Деплою воркер…",
         parse_mode="HTML",
     )
     try:
@@ -1644,14 +1666,14 @@ async def msg_shard_add_apply(
     await session.commit()
     if result.get("ok"):
         await msg.answer(
-            f"✓ Воркер деплоится: <code>{result.get('service_id')}</code>\n"
+            f" Воркер деплоится: <code>{result.get('service_id')}</code>\n"
             f"URL: {result.get('service_url')}",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
     else:
         await msg.answer(
-            f"⚠ Не получилось задеплоить: <code>{result.get('reason')}</code>",
+            f" Не получилось задеплоить: <code>{result.get('reason')}</code>",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1700,7 +1722,7 @@ async def msg_shard_toggle_apply(
     await shards_repo.set_status(session, sh.id, new_status)
     await session.commit()
     await msg.answer(
-        f"✓ <b>{name}</b> теперь: <b>{new_status.value}</b>",
+        f" <b>{name}</b> теперь: <b>{new_status.value}</b>",
         parse_mode="HTML",
         reply_markup=admin_back(),
     )
@@ -1751,13 +1773,13 @@ async def msg_shard_drop_apply(
                 await rc.delete_service(sh.service_id)
         except Exception as exc:  # noqa: BLE001
             await msg.answer(
-                f"⚠ Render service удаление: <code>{exc}</code>",
+                f" Render service удаление: <code>{exc}</code>",
                 parse_mode="HTML",
             )
     await shards_repo.delete(session, sh.id)
     await session.commit()
     await msg.answer(
-        f"✓ Шард <b>{name}</b> удалён.",
+        f" Шард <b>{name}</b> удалён.",
         parse_mode="HTML",
         reply_markup=admin_back(),
     )
@@ -1905,3 +1927,289 @@ async def cb_export_all_btn(
             parse_mode="HTML",
         )
     await cb.answer()
+
+
+# ──────────────────────────── Admin: hostings ───────────────────────────────
+#
+# Global view over every user's instance with start/stop/restart/logs/drop +
+# "view config" actions that reuse the functions already used by the user
+# side. Paginated, 6 rows per page.
+
+_HOSTINGS_PAGE = 6
+
+
+def _hostings_status_icon(status_value: str) -> str:
+    return {
+        "live": "🟢",
+        "deploying": "🟡",
+        "pending": "🟡",
+        "suspended": "🟡",
+        "failed": "🔴",
+        "deleted": "🔴",
+    }.get(status_value, "🟡")
+
+
+async def _render_hostings_page(session: AsyncSession, page: int) -> tuple[str, InlineKeyboardMarkup]:
+    from app.db.models import Instance, InstanceStatus as _St
+    from sqlalchemy import select as _select
+
+    q = _select(Instance).where(Instance.status != _St.DELETED).order_by(Instance.id.desc())
+    res = await session.execute(q)
+    all_inst = list(res.scalars())
+    total = len(all_inst)
+    pages = max(1, (total + _HOSTINGS_PAGE - 1) // _HOSTINGS_PAGE)
+    page = max(0, min(page, pages - 1))
+    chunk = all_inst[page * _HOSTINGS_PAGE:(page + 1) * _HOSTINGS_PAGE]
+
+    lines = [f"<b>Хостинги пользователей</b> · {total} · стр. {page + 1}/{pages}"]
+    rows: list[list[InlineKeyboardButton]] = []
+    for inst in chunk:
+        tier = ((inst.config or {}).get("tier") or "std").lower()
+        tier_suf = " PRO" if tier == "pro" else ""
+        ico = _hostings_status_icon(inst.status.value)
+        lines.append(
+            f"\n{ico} #{inst.id} · uid <code>{inst.user_id}</code> · "
+            f"{inst.product.value}{tier_suf} · {inst.status.value}"
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{ico} #{inst.id} · uid {inst.user_id} · {inst.product.value}{tier_suf}",
+                    callback_data=f"admin:host:open:{inst.id}",
+                )
+            ]
+        )
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="« назад", callback_data=f"admin:hostings:{page - 1}"))
+    if page + 1 < pages:
+        nav.append(InlineKeyboardButton(text="вперёд »", callback_data=f"admin:hostings:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="В админку", callback_data="admin")])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("admin:hostings:"))
+async def cb_admin_hostings(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    try:
+        page = int((cb.data or "admin:hostings:0").split(":")[2])
+    except ValueError:
+        page = 0
+    text, kb = await _render_hostings_page(session, page)
+    if cb.message:
+        try:
+            await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await cb.answer()
+
+
+def _host_actions_kb(inst_id: int, product_value: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="Старт", callback_data=f"admin:host:start:{inst_id}"),
+            InlineKeyboardButton(text="Стоп", callback_data=f"admin:host:stop:{inst_id}"),
+            InlineKeyboardButton(text="Рестарт", callback_data=f"admin:host:restart:{inst_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="Логи", callback_data=f"admin:host:logs:{inst_id}"),
+            InlineKeyboardButton(text="Статус", callback_data=f"admin:host:status:{inst_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="Удалить", callback_data=f"admin:host:drop:{inst_id}"),
+        ],
+        [InlineKeyboardButton(text="К списку", callback_data="admin:hostings:0")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("admin:host:open:"))
+async def cb_admin_host_open(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    from app.repos import instances as inst_repo
+    from app.services.supervisor import supervisor
+
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    s = supervisor.status(inst.id) or {}
+    tier = ((inst.config or {}).get("tier") or "std").lower()
+    tier_suf = " PRO" if tier == "pro" else ""
+    cfg_summary = []
+    if inst.product == ProductKind.CARDINAL:
+        gk = (inst.config or {}).get("golden_key") or ""
+        tok = (inst.config or {}).get("tg_token") or ""
+        cfg_summary.append(f"golden_key: {'*'*6 + gk[-4:] if gk else '(пусто)'}")
+        cfg_summary.append(f"tg_token: {tok[:10] + '…' if tok else '(пусто)'}")
+    else:
+        ep = (inst.config or {}).get("entrypoint") or "?"
+        cfg_summary.append(f"entrypoint: {ep}")
+    text = (
+        f"<b>Инстанс #{inst.id}</b>\n"
+        f"Пользователь: <code>{inst.user_id}</code>\n"
+        f"Продукт: {inst.product.value}{tier_suf}\n"
+        f"Статус: {_hostings_status_icon(inst.status.value)} {inst.status.value}\n"
+        f"Процесс: {'жив' if s.get('alive') else 'нет'} · PID {s.get('pid') or '—'} · "
+        f"uptime {s.get('uptime', 0)} с · restart {s.get('restart_count', 0)}\n"
+        + "\n".join(cfg_summary)
+    )
+    if cb.message:
+        try:
+            await cb.message.edit_text(
+                text, parse_mode="HTML", reply_markup=_host_actions_kb(inst.id, inst.product.value)
+            )
+        except Exception:
+            await cb.message.answer(
+                text, parse_mode="HTML", reply_markup=_host_actions_kb(inst.id, inst.product.value)
+            )
+    await cb.answer()
+
+
+async def _host_act(
+    cb: CallbackQuery, session: AsyncSession, user: User, verb: str
+) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    from app.db.models import InstanceStatus as _St
+    from app.repos import instances as inst_repo
+    from app.services.supervisor import supervisor
+
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+
+    if verb == "start":
+        # Re-create the tenant from stored config if needed.
+        cfg = inst.config or {}
+        if inst.product == ProductKind.CARDINAL and cfg.get("golden_key"):
+            try:
+                from app.services.cardinal import start_tenant
+
+                await start_tenant(
+                    inst.id,
+                    golden_key=cfg.get("golden_key", ""),
+                    telegram_token=cfg.get("tg_token", ""),
+                    secret_key_hash=cfg.get("tg_secret_hash", ""),
+                )
+                inst.status = _St.LIVE
+                inst.actual_state = "live"
+            except Exception:
+                logger.exception("admin start cardinal failed")
+                inst.status = _St.FAILED
+        else:
+            # Script: reuse cached spec via restart (supervisor.start requires a TenantSpec).
+            try:
+                await supervisor.restart(inst.id)
+                inst.status = _St.LIVE
+                inst.actual_state = "live"
+            except Exception:
+                logger.exception("admin start script failed")
+                inst.status = _St.FAILED
+        msg = "Стартую."
+    elif verb == "stop":
+        try:
+            await supervisor.stop(inst.id)
+        except Exception:
+            logger.exception("admin stop failed")
+        inst.status = _St.SUSPENDED
+        inst.actual_state = "stopped"
+        msg = "Остановил."
+    elif verb == "restart":
+        try:
+            await supervisor.restart(inst.id)
+            inst.status = _St.LIVE
+            inst.actual_state = "live"
+        except Exception:
+            logger.exception("admin restart failed")
+        msg = "Перезапускаю."
+    elif verb == "drop":
+        try:
+            await supervisor.stop(inst.id)
+        except Exception:
+            pass
+        if inst.product == ProductKind.CARDINAL:
+            try:
+                from app.services.cardinal import remove_tenant_dir
+
+                remove_tenant_dir(inst.id)
+            except Exception:
+                logger.exception("drop cardinal dir failed")
+        else:
+            try:
+                from app.services.script_host import remove as remove_script
+
+                remove_script(inst.id)
+            except Exception:
+                logger.exception("drop script dir failed")
+        inst.status = _St.DELETED
+        msg = "Удалил."
+    else:
+        msg = "?"
+    await session.commit()
+    await cb.answer(msg)
+    # Refresh the admin view.
+    fake_data = f"admin:host:open:{inst.id}"
+    cb.model_config if False else None  # no-op
+    cb.__dict__["data"] = fake_data
+    await cb_admin_host_open(cb, session, user)
+
+
+@router.callback_query(F.data.startswith("admin:host:start:"))
+async def _h_start(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "start")
+
+
+@router.callback_query(F.data.startswith("admin:host:stop:"))
+async def _h_stop(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "stop")
+
+
+@router.callback_query(F.data.startswith("admin:host:restart:"))
+async def _h_restart(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "restart")
+
+
+@router.callback_query(F.data.startswith("admin:host:drop:"))
+async def _h_drop(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "drop")
+
+
+@router.callback_query(F.data.startswith("admin:host:logs:"))
+async def _h_logs(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    from app.services.supervisor import supervisor
+
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    raw = supervisor.tail(inst_id, lines=40)
+    logs = "\n".join(raw) if raw else "(пусто)"
+    if cb.message:
+        await cb.message.answer(
+            f"<b>Логи #{inst_id}</b>\n<pre>{logs[-3500:]}</pre>",
+            parse_mode="HTML",
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:host:status:"))
+async def _h_status(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    # Reuse the same open view (contains all status fields).
+    inst_id = (cb.data or "").rsplit(":", 1)[-1]
+    cb.__dict__["data"] = f"admin:host:open:{inst_id}"
+    await cb_admin_host_open(cb, session, user)

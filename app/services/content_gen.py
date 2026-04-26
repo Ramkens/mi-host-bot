@@ -144,5 +144,5 @@ async def _gen_via_openai(kind: str, bot_username: str) -> GeneratedPost:
         r.raise_for_status()
         data = r.json()
     text = data["choices"][0]["message"]["content"].strip()
-    cta = f"👉 @{bot_username}"
+    cta = f" @{bot_username}"
     return GeneratedPost(kind=kind, title=random.choice(TITLES[kind]), body=text, cta=cta)

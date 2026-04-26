@@ -93,6 +93,9 @@ def admin_menu() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Экспорт", callback_data="admin:export"),
             ],
             [
+                InlineKeyboardButton(text="Хостинги", callback_data="admin:hostings:0"),
+            ],
+            [
                 InlineKeyboardButton(text="Рассылка", callback_data="admin:broadcast"),
                 InlineKeyboardButton(text="Доб. админа", callback_data="admin:add_admin"),
             ],

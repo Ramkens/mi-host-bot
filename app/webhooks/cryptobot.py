@@ -74,15 +74,33 @@ async def cryptobot_webhook(request: Request) -> dict:
             amount_rub=payment.amount_rub,
         )
         await session.commit()
-        # Notify user.
+        # Notify user + admins.
         try:
             from app.bot import bot_singleton
+            from app.db.models import User
+            from app.services.admin import notify_admins
 
             bot = bot_singleton()
             await bot.send_message(
                 payment.user_id,
-                f"✓ Оплата получена. Подписка <b>{payment.product.value}</b> продлена.",
+                "<b>Спасибо за покупку!</b>\n\n"
+                f"Подписка <b>{payment.product.value}</b> продлена на "
+                f"{settings.subscription_days} дней.\n\n"
+                "Сервер запустится в течение ~5 минут. "
+                "Настройки можно залить в /menu → Мои серверы.",
                 parse_mode="HTML",
+            )
+            u = await session.get(User, payment.user_id)
+            who = (u.first_name if u else str(payment.user_id)) or str(payment.user_id)
+            uname = f"@{u.username}" if (u and u.username) else ""
+            await notify_admins(
+                bot,
+                "<b>Новая покупка хостинга</b>\n"
+                f"Пользователь: <code>{payment.user_id}</code> {who} {uname}".strip()
+                + f"\nПродукт: <b>{payment.product.value}</b>"
+                + f"\nИсточник: CryptoBot"
+                + f"\nСумма: {payment.amount_rub} ₽"
+                + f"\nСрок: {settings.subscription_days} дн",
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("cryptobot notify: %s", exc)

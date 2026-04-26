@@ -246,7 +246,7 @@ async def receive_pw_custom(
     pw = (msg.text or "").strip()
     ok, err = validate_password(pw)
     if not ok:
-        await msg.answer(f"✗ {err}\nПопробуй ещё раз.")
+        await msg.answer(f" {err}\nПопробуй ещё раз.")
         return
     await state.update_data(tg_pw_plain=pw, tg_pw_hash=hash_password(pw))
     try:
@@ -498,7 +498,7 @@ async def _redeem_coupon_and_provision(
         if coupon.product != picked:
             await msg.answer(
                 f"· Купон на <b>{coupon.product.value}</b>, а ты покупал "
-                f"<b>{picked.value}</b>. Начни заново через /menu → 🖤 Купить.",
+                f"<b>{picked.value}</b>. Начни заново через /menu →  Купить.",
                 parse_mode="HTML",
             )
             return
@@ -546,7 +546,7 @@ async def _redeem_coupon_and_provision(
             else ""
         )
         await msg.answer(
-            f"<b>🖤 Спасибо!</b>\n\n"
+            f"<b>Спасибо!</b>\n\n"
             f"Купон <code>{code}</code> активирован: +{span} <b>{label}</b>."
             f"{pw_line}\n\n"
             f"{_kickoff_hint(product)}",
@@ -560,13 +560,22 @@ async def _redeem_coupon_and_provision(
             else "загрузи .zip"
         )
         await msg.answer(
-            f"<b>🖤 Спасибо!</b>\n\n"
+            f"<b>Спасибо!</b>\n\n"
             f"Купон <code>{code}</code> активирован: +{span} <b>{label}</b>.\n\n"
-            f"Чтобы сервер запустился, зайди /menu → ▣ Мои серверы → ⚙ Настроить "
+            f"Чтобы сервер запустился, зайди /menu → Мои серверы → Настроить "
             f"и {cont_hint}. Всё запустится автоматически за ~5 минут.",
             parse_mode="HTML",
         )
     await session.commit()
+    await _notify_admins_purchase(
+        msg.bot,
+        user=user,
+        product=product,
+        source="coupon",
+        hours=hours,
+        tier=tier,
+        code=code,
+    )
     await state.clear()
 
 
@@ -647,15 +656,59 @@ async def cb_pay_check(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     await session.commit()
 
     await cb.message.answer(
-        f"<b>🖤 Спасибо за покупку!</b>\n\n"
+        f"<b>Спасибо за покупку!</b>\n\n"
         f"Подписка <b>{payment.product.value}</b> активна на "
         f"{settings.subscription_days} дней.\n\n"
         f"{_kickoff_hint(payment.product)}",
         parse_mode="HTML",
         reply_markup=back_to_menu(),
     )
+    await _notify_admins_purchase(
+        cb.bot,
+        user=user,
+        product=payment.product,
+        source="CryptoBot",
+        amount_rub=payment.amount_rub,
+        days=settings.subscription_days,
+    )
     await state.clear()
     await cb.answer()
+
+
+async def _notify_admins_purchase(
+    bot,
+    *,
+    user: User,
+    product: ProductKind,
+    source: str,
+    amount_rub: int | None = None,
+    days: int | None = None,
+    hours: int | None = None,
+    tier: str = "std",
+    code: str | None = None,
+) -> None:
+    """Send a short summary to every admin when a user acquires hosting."""
+    from app.services.admin import notify_admins
+
+    tier_s = " PRO" if tier.lower() == "pro" else ""
+    who = user.first_name or str(user.id)
+    uname = f"@{user.username}" if user.username else ""
+    lines = [
+        "<b>Новая покупка хостинга</b>",
+        f"Пользователь: <code>{user.id}</code> {who} {uname}".strip(),
+        f"Продукт: <b>{product.value}{tier_s}</b>",
+        f"Источник: {source}",
+    ]
+    if amount_rub is not None:
+        lines.append(f"Сумма: {amount_rub} ₽")
+    if days is not None:
+        lines.append(f"Срок: {days} дн")
+    elif hours is not None:
+        span = f"{hours // 24} дн" if hours % 24 == 0 else f"{hours} ч"
+        lines.append(f"Срок: {span}")
+    if code:
+        lines.append(f"Купон: <code>{code}</code>")
+    await notify_admins(bot, "\n".join(lines))
 
 
 def _kickoff_hint(product: ProductKind) -> str:

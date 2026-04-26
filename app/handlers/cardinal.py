@@ -92,7 +92,7 @@ async def receive_new_key(
     except Exception:  # noqa: BLE001
         pass
     await msg.answer(
-        f"✓ golden_key обновлён. Cardinal #{inst.id} перезапущен.",
+        f" golden_key обновлён. Cardinal #{inst.id} перезапущен.",
         reply_markup=instance_actions(inst.id, inst.product.value),
     )
     await state.clear()
@@ -241,7 +241,7 @@ async def receive_main_cfg(
     success, message = await write_user_main_cfg(inst.id, content)
     if success:
         await msg.answer(
-            f"✓ {message}\nCardinal #{inst.id} перезапущен.",
+            f" {message}\nCardinal #{inst.id} перезапущен.",
             reply_markup=instance_actions(inst.id, inst.product.value),
         )
         await state.clear()
