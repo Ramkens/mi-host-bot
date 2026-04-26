@@ -1,0 +1,74 @@
+services:
+  - type: web
+    name: mi-host-bot
+    plan: starter
+    runtime: python
+    region: frankfurt
+    rootDir: .
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python -m app.main
+    healthCheckPath: /healthz
+    autoDeploy: true
+    branch: main
+    disk:
+      name: mihost-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: TZ
+        value: Europe/Moscow
+      - key: PORT
+        value: "10000"
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: WEBHOOK_PATH
+        value: "/tg/webhook"
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: CHANNEL_ID
+        sync: false
+      - key: CHAT_ID
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mi-host-db
+          property: connectionString
+      - key: CRYPTOBOT_TOKEN
+        sync: false
+      - key: CRYPTOBOT_WEBHOOK_SECRET
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_OWNER_ID
+        sync: false
+      - key: CRONJOB_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: MIHOST_DATA_DIR
+        value: /var/data/mihost
+      - key: SUBSCRIPTION_DAYS
+        value: "30"
+      - key: PRICE_CARDINAL_RUB
+        value: "40"
+      - key: PRICE_SCRIPT_RUB
+        value: "50"
+      - key: MINIGAME_COOLDOWN_HOURS
+        value: "12"
+      - key: MINIGAME_BONUS_DAYS
+        value: "1"
+      - key: REFERRAL_BONUS_DAYS
+        value: "3"
+
+databases:
+  - name: mi-host-db
+    plan: free
+    region: frankfurt
+    databaseName: mihost
+    user: mihost
