@@ -117,6 +117,11 @@ def _write_main_cfg(
         sections["Proxy"]["proxy"] = proxy
         sections["Proxy"]["enable"] = "1"
     (cfg_dir / "_main.cfg").write_text(render_main_cfg(sections), encoding="utf-8")
+    logger.info(
+        "_write_main_cfg: tenant=%s gk_len=%d tok_len=%d hash_set=%s proxy_set=%s",
+        tenant_dir.name, len(golden_key or ""), len(telegram_token or ""),
+        bool(secret_key_hash), bool(proxy),
+    )
     # Cardinal also expects two empty optional configs; create if missing.
     for fname in ("auto_response.cfg", "auto_delivery.cfg"):
         p = cfg_dir / fname

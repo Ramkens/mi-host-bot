@@ -218,6 +218,12 @@ class Supervisor:
         state.proc = None
         state.started_at = None
         state.log_tail.append(f"[supervisor] exited rc={rc} (ran {ran_for:.1f}s)")
+        if rc != 0 and ran_for < MIN_HEALTHY_SECS:
+            tail = list(state.log_tail)[-15:]
+            logger.warning(
+                "[supervisor] tenant %s crashed rc=%s after %.1fs; tail:\n%s",
+                state.spec.instance_id, rc, ran_for, "\n".join(tail),
+            )
         if state.stop_requested:
             return
         if not state.spec.autorestart:

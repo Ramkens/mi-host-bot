@@ -243,6 +243,46 @@ async def ping() -> dict:
     return {"pong": True}
 
 
+@app.get("/_dbg/tenant/{instance_id}")
+async def dbg_tenant(instance_id: int, request: Request) -> dict:
+    """Authed debug view of a tenant on this worker.
+
+    Auth: pass ``X-Mi-Secret`` header == ``SECRET_KEY``. Returns the
+    parsed _main.cfg sections (token masked) and the last lines of the
+    supervisor log tail. Used to debug why a Cardinal tenant won't
+    come up across master + worker boundary.
+    """
+    if request.headers.get("x-mi-secret") != settings.secret_key:
+        raise HTTPException(status_code=403, detail="forbidden")
+    from app.services.cardinal import _tenant_dir, read_main_cfg
+    from app.services.supervisor import supervisor as _sv
+
+    td = _tenant_dir(instance_id)
+    cfg_data = None
+    if (td / "configs" / "_main.cfg").exists():
+        sections = read_main_cfg(instance_id) or {}
+        # mask sensitive
+        out = {}
+        for sname, kv in sections.items():
+            out[sname] = {}
+            for k, v in kv.items():
+                if k.lower() in {"golden_key", "token", "secretkeyhash", "proxy"}:
+                    out[sname][k] = f"<set len={len(v)}>" if v else "<empty>"
+                else:
+                    out[sname][k] = v
+        cfg_data = out
+    state = _sv.tenants.get(instance_id)
+    return {
+        "tenant_dir_exists": td.exists(),
+        "tenant_dir": str(td),
+        "cfg": cfg_data,
+        "running": _sv.is_running(instance_id),
+        "restart_count": getattr(state, "restart_count", None) if state else None,
+        "stop_requested": getattr(state, "stop_requested", None) if state else None,
+        "log_tail": list(getattr(state, "log_tail", [])) if state else [],
+    }
+
+
 @app.post(settings.webhook_path)
 async def telegram_webhook(
     request: Request,

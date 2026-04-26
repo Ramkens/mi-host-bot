@@ -55,15 +55,24 @@ async def _start_instance(inst: Instance) -> None:
     """Spawn the subprocess for an instance whose desired_state=live."""
     if inst.product == ProductKind.CARDINAL:
         cfg = inst.config or {}
-        gk = cfg.get("golden_key")
+        gk = cfg.get("golden_key") or ""
+        tok = cfg.get("tg_token") or ""
+        h = cfg.get("tg_secret_hash") or ""
         if not gk:
-            logger.warning("instance %s: no golden_key, skipping", inst.id)
+            logger.warning(
+                "instance %s: no golden_key (cfg keys=%s); skipping",
+                inst.id, list(cfg.keys()),
+            )
             return
+        logger.info(
+            "instance %s: starting cardinal gk_len=%d tok_len=%d hash_len=%d",
+            inst.id, len(gk), len(tok), len(h),
+        )
         await start_tenant(
             inst.id,
             golden_key=gk,
-            telegram_token=cfg.get("tg_token", "") or "",
-            secret_key_hash=cfg.get("tg_secret_hash") or None,
+            telegram_token=tok,
+            secret_key_hash=h or None,
             proxy=cfg.get("proxy", "") or "",
         )
     else:
