@@ -17,6 +17,7 @@ from app.services.funnel import (
     remind_expiring_subs,
     remind_unpaid_invoices,
 )
+from app.services.purge import purge_expired_tenants
 from app.utils.time import MSK
 
 if TYPE_CHECKING:
@@ -95,6 +96,17 @@ def setup_scheduler(bot: "Bot") -> AsyncIOScheduler:
         trigger=IntervalTrigger(hours=6),
         args=[bot],
         id="db_rotate",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+
+    # Auto-purge expired tenants after `purge_grace_days` (with admin backup).
+    sched.add_job(
+        purge_expired_tenants,
+        trigger=IntervalTrigger(hours=12),
+        args=[bot],
+        id="purge_expired",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

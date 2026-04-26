@@ -89,6 +89,7 @@ async def deploy(
     zip_bytes: bytes,
     *,
     env: Optional[dict[str, str]] = None,
+    ram_mb: int = 130,
 ) -> tuple[AnalysisResult, Optional[DeploySpec]]:
     analysis = analyze_zip(zip_bytes)
     if not analysis.ok:
@@ -106,6 +107,7 @@ async def deploy(
         cwd=work,
         cmd=cmd,
         env={**(env or {}), "PYTHONUNBUFFERED": "1"},
+        rlimit_as_mb=ram_mb,
     )
     await supervisor.start(tspec)
     return analysis, spec

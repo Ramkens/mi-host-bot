@@ -37,16 +37,32 @@ def buy_menu() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="▸ FunPay Cardinal · 40 ₽ / мес",
-                    callback_data=f"buy:start:{ProductKind.CARDINAL.value}",
+                    callback_data=f"buy:start:{ProductKind.CARDINAL.value}:std",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="▸ Кастом-скрипт · 50 ₽ / мес",
-                    callback_data=f"buy:start:{ProductKind.SCRIPT.value}",
+                    text="▸ Скрипт STD · 130 MB · 50 ₽ / мес",
+                    callback_data=f"buy:start:{ProductKind.SCRIPT.value}:std",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="▸ Скрипт PRO · 512 MB · 150 ₽ / мес",
+                    callback_data=f"buy:start:{ProductKind.SCRIPT.value}:pro",
                 )
             ],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
+        ]
+    )
+
+
+def buy_confirm_tier(product: str, tier: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="▣ К оплате", callback_data=f"buy:invoice:{product}:{tier}")],
+            [InlineKeyboardButton(text="◇ У меня купон", callback_data=f"buy:coupon:{product}:{tier}")],
+            [InlineKeyboardButton(text="« Отмена", callback_data="menu")],
         ]
     )
 

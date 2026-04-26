@@ -21,7 +21,7 @@ from app.config import settings
 from app.db.models import InstanceStatus, PaymentStatus, ProductKind, User
 from app.keyboards.main import (
     back_to_menu,
-    buy_confirm,
+    buy_confirm_tier,
     buy_menu,
     pay_buttons,
 )
@@ -86,9 +86,11 @@ async def cb_buy_start(
 ) -> None:
     if not cb.data:
         return
-    product = ProductKind(cb.data.split(":")[2])
+    parts = cb.data.split(":")
+    product = ProductKind(parts[2])
+    tier = parts[3] if len(parts) > 3 else "std"
     await state.clear()
-    await state.update_data(product=product.value)
+    await state.update_data(product=product.value, tier=tier)
     if cb.message:
         if product == ProductKind.CARDINAL:
             await cb.message.answer(
@@ -96,16 +98,22 @@ async def cb_buy_start(
                 "Пришли свой <code>golden_key</code> от FunPay одним сообщением.\n"
                 "Он шифруется и используется только для запуска твоего инстанса.\n\n"
                 "<i>Где взять:</i> на funpay.com → DevTools → Application → Cookies → <code>golden_key</code>.\n\n"
-                "« Отменить — нажми /menu",
+                "« Отменить — /menu",
                 parse_mode="HTML",
             )
             await state.set_state(BuyFSM.awaiting_golden_key)
         else:
+            ram = (
+                settings.script_pro_ram_mb if tier == "pro"
+                else settings.script_std_ram_mb
+            )
             await cb.message.answer(
-                "<b>Настройка скрипта</b>\n\n"
+                f"<b>Настройка скрипта · {tier.upper()} · {ram} MB</b>\n\n"
                 "Пришли .zip-архив с твоим Python-проектом одним документом.\n"
                 "Внутри: <code>main.py</code> (или другой entrypoint) и опц. "
                 "<code>requirements.txt</code>. До 25 MB.\n\n"
+                f"<i>Лимит RAM в рантайме: {ram} MB. "
+                f"{'Целый сервер выделен под тебя.' if tier == 'pro' else 'Если упирается — переходи на PRO (512 MB / 150 ₽).'}</i>\n\n"
                 "« Отменить — /menu",
                 parse_mode="HTML",
             )
@@ -153,6 +161,12 @@ async def reject_non_zip(msg: Message) -> None:
     await msg.answer("Пришли .zip как документ.")
 
 
+def _price_for(product: ProductKind, tier: str) -> int:
+    if product == ProductKind.CARDINAL:
+        return settings.price_cardinal_rub
+    return settings.price_script_pro_rub if tier == "pro" else settings.price_script_rub
+
+
 async def _show_summary(
     msg: Message,
     state: FSMContext,
@@ -161,11 +175,8 @@ async def _show_summary(
     product: ProductKind,
 ) -> None:
     data = await state.get_data()
-    price = (
-        settings.price_cardinal_rub
-        if product == ProductKind.CARDINAL
-        else settings.price_script_rub
-    )
+    tier = data.get("tier", "std")
+    price = _price_for(product, tier)
     if product == ProductKind.CARDINAL:
         details = (
             f"◾ Cardinal-инстанс\n"
@@ -174,8 +185,12 @@ async def _show_summary(
         )
     else:
         size_kb = data.get("zip_size", 0) // 1024
+        ram = (
+            settings.script_pro_ram_mb if tier == "pro"
+            else settings.script_std_ram_mb
+        )
         details = (
-            f"◾ Кастом-скрипт\n"
+            f"◾ Кастом-скрипт · {tier.upper()} · {ram} MB\n"
             f"◾ Архив: <code>{data['zip_name']}</code> · {size_kb} KB\n"
             f"◾ Срок: 30 дней\n"
         )
@@ -188,7 +203,7 @@ async def _show_summary(
         "или сразу пиши в <a href=\"tg://user?id={admin}\">саппорт</a>.\n\n"
         "Есть бесплатный купон? Жми «У меня купон»."
     ).format(admin=settings.admin_ids_list[0] if settings.admin_ids_list else 0)
-    await msg.answer(text, parse_mode="HTML", reply_markup=buy_confirm(product.value))
+    await msg.answer(text, parse_mode="HTML", reply_markup=buy_confirm_tier(product.value, tier))
 
 
 # --- Step 3a: invoice ---
@@ -200,7 +215,9 @@ async def cb_buy_invoice(
 ) -> None:
     if not cb.data:
         return
-    product = ProductKind(cb.data.split(":")[2])
+    parts = cb.data.split(":")
+    product = ProductKind(parts[2])
+    tier = parts[3] if len(parts) > 3 else "std"
     data = await state.get_data()
     if product == ProductKind.CARDINAL and not data.get("golden_key"):
         await cb.answer("Сначала пришли golden_key", show_alert=True)
@@ -208,12 +225,9 @@ async def cb_buy_invoice(
     if product == ProductKind.SCRIPT and not data.get("zip_bytes"):
         await cb.answer("Сначала пришли .zip", show_alert=True)
         return
+    await state.update_data(tier=tier)
 
-    price = (
-        settings.price_cardinal_rub
-        if product == ProductKind.CARDINAL
-        else settings.price_script_rub
-    )
+    price = _price_for(product, tier)
 
     client = CryptoBotClient()
     if not client.enabled:
@@ -277,6 +291,10 @@ async def cb_buy_invoice(
 async def cb_buy_coupon(
     cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
+    if cb.data:
+        parts = cb.data.split(":")
+        if len(parts) > 3:
+            await state.update_data(tier=parts[3])
     await state.set_state(BuyFSM.awaiting_coupon)
     if cb.message:
         await cb.message.answer(
@@ -404,6 +422,7 @@ async def _provision_instance(
     from app.services.supervisor import TenantSpec, supervisor
     import sys
 
+    tier = data.get("tier", "std")
     if product == ProductKind.CARDINAL:
         gk = data.get("golden_key")
         if not gk:
@@ -412,14 +431,14 @@ async def _provision_instance(
         existing = await inst_repo.list_for_user(session, user_id, ProductKind.CARDINAL)
         if existing:
             inst = existing[0]
-            inst.config = {**(inst.config or {}), "golden_key": gk}
+            inst.config = {**(inst.config or {}), "golden_key": gk, "tier": tier}
         else:
             inst = await inst_repo.create(
                 session,
                 user_id=user_id,
                 product=ProductKind.CARDINAL,
                 name=f"cardinal-{user_id}",
-                config={"golden_key": gk},
+                config={"golden_key": gk, "tier": tier},
             )
         inst.status = InstanceStatus.DEPLOYING
         inst.desired_state = "live"
@@ -441,18 +460,23 @@ async def _provision_instance(
         existing = await inst_repo.list_for_user(session, user_id, ProductKind.SCRIPT)
         if existing:
             inst = existing[0]
+            inst.config = {**(inst.config or {}), "tier": tier}
         else:
             inst = await inst_repo.create(
                 session,
                 user_id=user_id,
                 product=ProductKind.SCRIPT,
                 name=f"script-{user_id}",
+                config={"tier": tier},
             )
         inst.status = InstanceStatus.DEPLOYING
         inst.desired_state = "live"
         await session.flush()
+        ram_mb = (
+            settings.script_pro_ram_mb if tier == "pro" else settings.script_std_ram_mb
+        )
         try:
-            analysis, spec = await script_host.deploy(inst.id, zip_bytes)
+            analysis, spec = await script_host.deploy(inst.id, zip_bytes, ram_mb=ram_mb)
             inst.risk_score = analysis.risk_score
             inst.risk_report = analysis.report
             if not analysis.ok:
