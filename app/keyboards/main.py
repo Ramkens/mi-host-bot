@@ -226,6 +226,7 @@ def admin_shards_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Добавить", callback_data="admin:shard:add")],
             [InlineKeyboardButton(text="Пауза/возобновить", callback_data="admin:shard:toggle")],
             [InlineKeyboardButton(text="Удалить", callback_data="admin:shard:drop")],
+            [InlineKeyboardButton(text="Снести мёртвые", callback_data="admin:shard:purge_dead")],
             [InlineKeyboardButton(text="В админку", callback_data="admin")],
         ]
     )

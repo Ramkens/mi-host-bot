@@ -1542,6 +1542,51 @@ async def cb_shards_menu(
     await cb.answer()
 
 
+@router.callback_query(F.data == "admin:shard:purge_dead")
+async def cb_shard_purge_dead(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    from sqlalchemy import update as sa_update
+
+    from app.db.models import Instance, InstanceStatus, Shard
+    from app.repos import shards as shards_repo
+
+    rows = await shards_repo.all_(session)
+    dead_ids: list[int] = []
+    for sh in rows:
+        if not shards_repo.is_alive(sh):
+            dead_ids.append(sh.id)
+    if not dead_ids:
+        await cb.answer("Мёртвых шардов нет.", show_alert=True)
+        return
+    # Move any non-deleted instance off these shards back to master.
+    await session.execute(
+        sa_update(Instance)
+        .where(Instance.shard_id.in_(dead_ids))
+        .where(Instance.status != InstanceStatus.DELETED)
+        .values(shard_id=None, actual_state="stopped")
+    )
+    # Detach DELETED rows too so the shard row itself can be removed
+    # without violating any FK if one is added later.
+    await session.execute(
+        sa_update(Instance)
+        .where(Instance.shard_id.in_(dead_ids))
+        .values(shard_id=None)
+    )
+    for sid in dead_ids:
+        await shards_repo.delete(session, sid)
+    await session.commit()
+    if cb.message:
+        await cb.message.answer(
+            f"Снёс {len(dead_ids)} мёртвых шардов. "
+            f"Их инстансы вернул на мастер.",
+        )
+    await cb.answer()
+
+
 @router.callback_query(F.data == "admin:shard:list")
 async def cb_shard_list(
     cb: CallbackQuery, session: AsyncSession, user: User

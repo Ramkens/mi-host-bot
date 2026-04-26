@@ -204,6 +204,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     asyncio.create_task(_notify_admins_started(bot))
     asyncio.create_task(_ensure_keepalive_cron())
 
+    # Keep DB Instance.status honest about what supervisor is actually
+    # running. Without this, a dead process keeps showing as LIVE in
+    # /shards, admin Хостинги and the user's «Мои серверы».
+    from app.services.reconciler import run_reconciler_forever
+
+    asyncio.create_task(run_reconciler_forever())
+
     try:
         yield
     finally:
