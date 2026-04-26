@@ -2158,6 +2158,7 @@ async def _host_act(
             except Exception:
                 logger.exception("drop script dir failed")
         inst.status = _St.DELETED
+        inst.desired_state = "stopped"
         inst.actual_state = "deleted"
         msg = f"Удалил. Освобождено {freed // 1024} KB."
     else:

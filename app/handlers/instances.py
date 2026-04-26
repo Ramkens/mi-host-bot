@@ -622,6 +622,7 @@ async def cb_drop_confirm(
         except Exception:
             pass
     inst.status = InstanceStatus.DELETED
+    inst.desired_state = "stopped"
     inst.actual_state = "deleted"
     await session.commit()
     if cb.message:
