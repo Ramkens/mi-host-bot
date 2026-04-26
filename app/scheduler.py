@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
 from app.services.channel import post_one
+from app.services.db_rotation import maybe_rotate
 from app.services.funnel import (
     reach_out_to_churned,
     remind_expiring_subs,
@@ -86,6 +87,17 @@ def setup_scheduler(bot: "Bot") -> AsyncIOScheduler:
         args=[bot],
         id="remind_unpaid",
         replace_existing=True,
+    )
+
+    # Postgres auto-rotation (Render free PG dies after 30 days).
+    sched.add_job(
+        maybe_rotate,
+        trigger=IntervalTrigger(hours=6),
+        args=[bot],
+        id="db_rotate",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
     )
 
     return sched

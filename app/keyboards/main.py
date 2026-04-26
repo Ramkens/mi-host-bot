@@ -19,10 +19,9 @@ def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="▸ Мои инстансы", callback_data="instances"),
-            InlineKeyboardButton(text="▸ Мини-игра", callback_data="minigame"),
+            InlineKeyboardButton(text="▸ Рефералы", callback_data="referral"),
         ],
         [
-            InlineKeyboardButton(text="▸ Рефералы", callback_data="referral"),
             InlineKeyboardButton(text="▸ Поддержка", callback_data="support"),
         ],
     ]
