@@ -1,4 +1,4 @@
-"""/start, /menu, profile, referral capture."""
+"""/start, /menu, profile."""
 from __future__ import annotations
 
 import logging
@@ -14,7 +14,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.models import ReferralEvent, User
+from app.db.models import User
 from app.keyboards.main import back_to_menu, main_menu
 from app.repos import settings as settings_repo
 from app.repos import subscriptions as subs_repo
@@ -37,22 +37,22 @@ def _ensure_assets() -> Path:
 async def _greeting_text(session: AsyncSession, user: User) -> str:
     subs = await subs_repo.list_for_user(session, user.id)
     lines = [
-        "<b>MI HOST</b>",
-        "Хостинг FunPay Cardinal · 40 ₽/мес",
-        "Хостинг кастом-скриптов · 50 ₽/мес",
+        "<b>▰▰▰  MI HOST  ▰▰▰</b>",
+        "<i>хостинг FunPay Cardinal · 40 ₽/мес</i>",
+        "<i>хостинг кастом-скриптов · 50 ₽/мес</i>",
         "",
-        f"<b>Профиль:</b> {user.first_name or ''} #{user.id}",
-        f"<b>Уровень:</b> {user.level} · <b>XP:</b> {user.xp} · <b>Coins:</b> {user.coins}",
+        f"◾ <b>{user.first_name or 'юзер'}</b>  ·  id <code>{user.id}</code>",
+        f"◾ lvl {user.level}  ·  xp {user.xp}  ·  coins {user.coins}",
     ]
     active_subs = [s for s in subs if s.expires_at > now_utc()]
     if active_subs:
         lines.append("")
-        lines.append("<b>Активные подписки:</b>")
+        lines.append("<b>Активные подписки</b>")
         for s in active_subs:
-            lines.append(f"• {s.product.value} — до {fmt_msk(s.expires_at)}")
+            lines.append(f"  ◆ {s.product.value} — до <code>{fmt_msk(s.expires_at)}</code>")
     else:
         lines.append("")
-        lines.append("<i>У вас нет активных подписок.</i>")
+        lines.append("<i>◇ нет активных подписок · /menu → купить</i>")
     return "\n".join(lines)
 
 
@@ -64,20 +64,6 @@ async def cmd_start(
     session: AsyncSession,
     user: User,
 ) -> None:
-    # Referral capture from /start <ref_id>
-    arg = (command.args or "").strip()
-    if arg.isdigit() and int(arg) != user.id and user.referrer_id is None:
-        try:
-            ref_id = int(arg)
-            referrer = await users_repo.by_id(session, ref_id)
-            if referrer:
-                user.referrer_id = ref_id
-                session.add(
-                    ReferralEvent(referrer_id=ref_id, referee_id=user.id)
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("referral capture: %s", exc)
-
     img = _ensure_assets()
     text = await _greeting_text(session, user)
     admin = await is_admin(session, user.id)
@@ -143,11 +129,14 @@ async def cb_profile(cb: CallbackQuery, session: AsyncSession, user: User) -> No
 
 @router.callback_query(F.data == "support")
 async def cb_support(cb: CallbackQuery) -> None:
+    admin_id = settings.admin_ids_list[0] if settings.admin_ids_list else 0
     text = (
         "<b>Поддержка</b>\n\n"
-        f"Админ: tg://user?id={settings.admin_ids_list[0] if settings.admin_ids_list else ''}\n"
-        "Время ответа: до 12 часов.\n"
-        "Перед обращением проверьте раздел «Мои инстансы» — там есть логи и статус."
+        f"◾ Админ: <a href=\"tg://user?id={admin_id}\">написать в чат</a>\n"
+        "◾ Время ответа: до 12 часов\n\n"
+        "<b>Хочешь оплатить другой криптой?</b>\n"
+        "Напиши админу: «оплата TON/BTC/ETH/…», он скинет адрес и вручную выдаст подписку.\n\n"
+        "<i>Перед обращением — глянь /menu → «Мои инстансы» → Логи/Статус.</i>"
     )
     if cb.message:
         try:

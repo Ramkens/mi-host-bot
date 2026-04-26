@@ -1,11 +1,9 @@
-"""Inline keyboards (dark/neon UI: bullets and arrows, no emoji spam)."""
+"""Inline keyboards (strict dark/neon UI: arrows + bullets, no joyful emoji)."""
 from __future__ import annotations
 
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
 )
 
 from app.db.models import ProductKind
@@ -19,16 +17,11 @@ def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="▸ Мои инстансы", callback_data="instances"),
-            InlineKeyboardButton(text="▸ Рефералы", callback_data="referral"),
-        ],
-        [
             InlineKeyboardButton(text="▸ Поддержка", callback_data="support"),
         ],
     ]
     if is_admin:
-        rows.append(
-            [InlineKeyboardButton(text="▸ Админка", callback_data="admin")]
-        )
+        rows.append([InlineKeyboardButton(text="◆ Админка", callback_data="admin")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -43,16 +36,38 @@ def buy_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="▸ Cardinal · 40 ₽",
-                    callback_data=f"buy:{ProductKind.CARDINAL.value}",
+                    text="▸ FunPay Cardinal · 40 ₽ / мес",
+                    callback_data=f"buy:start:{ProductKind.CARDINAL.value}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="▸ Кастом-скрипт · 50 ₽",
-                    callback_data=f"buy:{ProductKind.SCRIPT.value}",
+                    text="▸ Кастом-скрипт · 50 ₽ / мес",
+                    callback_data=f"buy:start:{ProductKind.SCRIPT.value}",
                 )
             ],
+            [InlineKeyboardButton(text="« В меню", callback_data="menu")],
+        ]
+    )
+
+
+def buy_confirm(product: str) -> InlineKeyboardMarkup:
+    """After settings collected — confirm before invoice."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="▣ К оплате", callback_data=f"buy:invoice:{product}")],
+            [InlineKeyboardButton(text="◇ У меня купон", callback_data=f"buy:coupon:{product}")],
+            [InlineKeyboardButton(text="« Отмена", callback_data="menu")],
+        ]
+    )
+
+
+def pay_buttons(pay_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="▣ Оплатить в CryptoBot (USDT)", url=pay_url)],
+            [InlineKeyboardButton(text="▸ Я оплатил — проверить", callback_data="pay:check")],
+            [InlineKeyboardButton(text="◇ Другая крипта → саппорт", callback_data="support")],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
         ]
     )
@@ -61,11 +76,14 @@ def buy_menu() -> InlineKeyboardMarkup:
 def admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="▸ Статистика", callback_data="admin:stats")],
-            [InlineKeyboardButton(text="▸ Рассылка", callback_data="admin:broadcast")],
-            [InlineKeyboardButton(text="▸ Доб. админа", callback_data="admin:add_admin")],
-            [InlineKeyboardButton(text="▸ Брендировать канал", callback_data="admin:brand")],
-            [InlineKeyboardButton(text="▸ Опубликовать пост", callback_data="admin:post_now")],
+            [InlineKeyboardButton(text="◆ Статистика", callback_data="admin:stats")],
+            [InlineKeyboardButton(text="◆ Купоны", callback_data="admin:coupons")],
+            [InlineKeyboardButton(text="◆ Подписки", callback_data="admin:subs_help")],
+            [InlineKeyboardButton(text="◆ Шарды", callback_data="admin:shards")],
+            [InlineKeyboardButton(text="◆ Рассылка", callback_data="admin:broadcast")],
+            [InlineKeyboardButton(text="◆ Доб. админа", callback_data="admin:add_admin")],
+            [InlineKeyboardButton(text="◆ Брендировать канал", callback_data="admin:brand")],
+            [InlineKeyboardButton(text="◆ Опубликовать пост", callback_data="admin:post_now")],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
         ]
     )
@@ -96,13 +114,3 @@ def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
         )
     rows.append([InlineKeyboardButton(text="« К списку", callback_data="instances")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def pay_buttons(pay_url: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="▸ Оплатить", url=pay_url)],
-            [InlineKeyboardButton(text="▸ Я оплатил — проверить", callback_data="pay:check")],
-            [InlineKeyboardButton(text="« В меню", callback_data="menu")],
-        ]
-    )

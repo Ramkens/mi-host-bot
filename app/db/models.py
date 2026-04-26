@@ -118,6 +118,42 @@ class Payment(Base):
     )
 
 
+class ShardStatus(str, PyEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"  # don't schedule new tenants here; existing keep running
+    DRAINING = "draining"  # actively migrate tenants out
+    DEAD = "dead"  # not responding
+
+
+class Shard(Base):
+    """A Render account (worker host) that runs tenant subprocesses.
+
+    The master service writes desired_state on Instance rows, and the worker
+    on this shard reconciles. Workers report `last_seen_at` so master can
+    detect dead shards.
+    """
+
+    __tablename__ = "shards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    # Fernet-encrypted Render API key (cyphertext is base64 urlsafe).
+    api_key_enc: Mapped[str] = mapped_column(Text)
+    owner_id: Mapped[Optional[str]] = mapped_column(String(64))
+    service_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
+    service_url: Mapped[Optional[str]] = mapped_column(Text)
+    region: Mapped[str] = mapped_column(String(32), default="frankfurt")
+    capacity: Mapped[int] = mapped_column(Integer, default=4)  # max tenants per shard
+    status: Mapped[ShardStatus] = mapped_column(
+        Enum(ShardStatus, name="shard_status"), default=ShardStatus.ACTIVE
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now()
+    )
+
+
 class Instance(Base):
     __tablename__ = "instances"
 
@@ -127,10 +163,17 @@ class Instance(Base):
     )
     product: Mapped[ProductKind] = mapped_column(Enum(ProductKind, name="product_kind"))
     name: Mapped[str] = mapped_column(String(128))
+    # Which shard runs the subprocess for this tenant. NULL = run on master.
+    shard_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("shards.id", ondelete="SET NULL"), index=True
+    )
     status: Mapped[InstanceStatus] = mapped_column(
         Enum(InstanceStatus, name="instance_status"),
         default=InstanceStatus.PENDING,
     )
+    # The desired vs actual lifecycle state — set by master, observed by worker.
+    desired_state: Mapped[str] = mapped_column(String(16), default="live")  # live|stopped
+    actual_state: Mapped[str] = mapped_column(String(16), default="stopped")
     render_service_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     render_url: Mapped[Optional[str]] = mapped_column(Text)
     last_deploy_id: Mapped[Optional[str]] = mapped_column(String(64))
@@ -180,6 +223,29 @@ class ReferralEvent(Base):
     referrer_id: Mapped[int] = mapped_column(BigInteger, index=True)
     referee_id: Mapped[int] = mapped_column(BigInteger, index=True, unique=True)
     rewarded: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now()
+    )
+
+
+class Coupon(Base):
+    """Single-use code that grants a free subscription period.
+
+    Created by an admin via /create_coupon, redeemed by a user during the
+    buy flow as an alternative to paying.
+    """
+
+    __tablename__ = "coupons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    product: Mapped[ProductKind] = mapped_column(Enum(ProductKind, name="product_kind"))
+    days: Mapped[int] = mapped_column(Integer, default=30)
+    issued_by: Mapped[Optional[int]] = mapped_column(BigInteger)
+    used_by: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    note: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now()
     )

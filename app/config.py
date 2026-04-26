@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     def render_service_id_self(self) -> str:
         return self.render_service_id
 
+    # --- Multi-shard ---
+    # "master" (default) = full bot, runs handlers + scheduler + workers for
+    # tenants without a shard. "worker" = headless reconciler for tenants on
+    # this shard. Set via MIHOST_ROLE env var.
+    mihost_role: str = "master"
+    mihost_shard_name: str = ""
+
     # --- cron-job.org ---
     cronjob_api_key: str = ""
 

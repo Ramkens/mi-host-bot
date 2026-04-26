@@ -118,6 +118,12 @@ class Supervisor:
         await self.stop(instance_id)
         self.tenants.pop(instance_id, None)
 
+    def is_running(self, instance_id: int) -> bool:
+        state = self.tenants.get(instance_id)
+        if state is None or state.proc is None:
+            return False
+        return state.proc.returncode is None
+
     async def stop_all(self) -> None:
         ids = list(self.tenants.keys())
         for i in ids:
