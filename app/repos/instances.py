@@ -17,8 +17,19 @@ async def create(
     name: str,
     config: Optional[dict] = None,
 ) -> Instance:
+    """Create an Instance row, picking the least-loaded shard if any exist.
+
+    If no shards are registered, `shard_id` stays NULL (run on master).
+    """
+    from app.repos import shards as shards_repo
+
+    shard = await shards_repo.pick_least_loaded(session)
     inst = Instance(
-        user_id=user_id, product=product, name=name, config=config or {}
+        user_id=user_id,
+        product=product,
+        name=name,
+        config=config or {},
+        shard_id=shard.id if shard else None,
     )
     session.add(inst)
     await session.flush()

@@ -12,7 +12,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.db.models import ProductKind, User
 from app.keyboards.main import admin_menu, back_to_menu
 from app.repos import users as users_repo
 from app.services.admin import is_admin, stats_dashboard
@@ -248,3 +248,441 @@ async def cmd_rotate_db(msg: Message, session: AsyncSession, user: User) -> None
 
     result = await rotate_now(msg.bot, force=True)
     await msg.answer(f"<pre>{result}</pre>", parse_mode="HTML")
+
+
+# --- Sharding ---
+
+@router.message(Command("add_shard"))
+async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None:
+    """Register a new shard:  /add_shard <name> <render_api_key> [capacity]"""
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split(maxsplit=3)
+    if len(parts) < 3:
+        await msg.answer(
+            "Использование:\n<code>/add_shard &lt;name&gt; &lt;RENDER_API_KEY&gt; [capacity=4]</code>\n\n"
+            "После добавления бот сам создаст web-service в этом аккаунте.",
+            parse_mode="HTML",
+        )
+        return
+    name = parts[1].strip()
+    api_key = parts[2].strip()
+    capacity = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 4
+
+    from app.repos import shards as shards_repo
+    from app.services.render_api import RenderClient
+    from app.services.shard_provision import provision_worker
+
+    # Validate the API key first.
+    rc = RenderClient(api_key=api_key)
+    try:
+        owner_id = await rc.autodetect_owner()
+    except Exception as exc:  # noqa: BLE001
+        await msg.answer(f"❌ API key недействителен: <code>{exc}</code>", parse_mode="HTML")
+        return
+    if not owner_id:
+        await msg.answer("❌ Не нашёл owner у этого API key.")
+        return
+
+    existing = await shards_repo.by_name(session, name)
+    if existing:
+        await msg.answer(f"❌ Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
+        return
+
+    shard = await shards_repo.create(
+        session,
+        name=name,
+        api_key=api_key,
+        owner_id=owner_id,
+        capacity=capacity,
+    )
+    await session.commit()
+
+    await msg.answer(
+        f"✅ Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
+        f"Деплою воркер на этот аккаунт…",
+        parse_mode="HTML",
+    )
+    # Try to delete the original message so the API key disappears from chat.
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+
+    result = await provision_worker(session, shard.id)
+    await session.commit()
+    if result.get("ok"):
+        await msg.answer(
+            f"🚀 Воркер деплоится: <code>{result.get('service_id')}</code>\n"
+            f"URL: {result.get('service_url')}\n\n"
+            "Жди ~3 минуты до первого heartbeat.",
+            parse_mode="HTML",
+        )
+    else:
+        await msg.answer(
+            f"⚠️ Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
+            parse_mode="HTML",
+        )
+
+
+@router.message(Command("shards"))
+async def cmd_shards(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        return
+    from app.repos import shards as shards_repo
+
+    rows = await shards_repo.all_(session)
+    occ = await shards_repo.occupancy(session)
+    if not rows:
+        await msg.answer("Шардов пока нет. Добавь через /add_shard.")
+        return
+    lines = ["<b>Шарды:</b>"]
+    for sh in rows:
+        load = occ.get(sh.id, 0)
+        alive = shards_repo.is_alive(sh)
+        seen = "никогда" if not sh.last_seen_at else sh.last_seen_at.strftime("%Y-%m-%d %H:%M")
+        marker = "🟢" if alive else "🔴"
+        lines.append(
+            f"{marker} <b>{sh.name}</b> · id={sh.id} · {load}/{sh.capacity} · {sh.status.value}\n"
+            f"    service: <code>{sh.service_id or '-'}</code>\n"
+            f"    last_seen: {seen}"
+        )
+    await msg.answer("\n\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("pause_shard"))
+async def cmd_pause_shard(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await msg.answer("Использование: <code>/pause_shard &lt;name&gt;</code>", parse_mode="HTML")
+        return
+    from app.repos import shards as shards_repo
+    from app.db.models import ShardStatus
+
+    sh = await shards_repo.by_name(session, parts[1].strip())
+    if not sh:
+        await msg.answer("Шард не найден.")
+        return
+    await shards_repo.set_status(session, sh.id, ShardStatus.PAUSED)
+    await session.commit()
+    await msg.answer(f"⏸ Шард <b>{sh.name}</b> на паузе.", parse_mode="HTML")
+
+
+@router.message(Command("resume_shard"))
+async def cmd_resume_shard(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await msg.answer("Использование: <code>/resume_shard &lt;name&gt;</code>", parse_mode="HTML")
+        return
+    from app.repos import shards as shards_repo
+    from app.db.models import ShardStatus
+
+    sh = await shards_repo.by_name(session, parts[1].strip())
+    if not sh:
+        await msg.answer("Шард не найден.")
+        return
+    await shards_repo.set_status(session, sh.id, ShardStatus.ACTIVE)
+    await session.commit()
+    await msg.answer(f"▶ Шард <b>{sh.name}</b> снова активен.", parse_mode="HTML")
+
+
+@router.message(Command("drop_shard"))
+async def cmd_drop_shard(msg: Message, session: AsyncSession, user: User) -> None:
+    """Delete a shard from the registry. Existing tenants on it become orphaned
+    until you /reassign or the shard goes back online."""
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await msg.answer("Использование: <code>/drop_shard &lt;name&gt;</code>", parse_mode="HTML")
+        return
+    from app.repos import shards as shards_repo
+
+    sh = await shards_repo.by_name(session, parts[1].strip())
+    if not sh:
+        await msg.answer("Шард не найден.")
+        return
+    await shards_repo.delete(session, sh.id)
+    await session.commit()
+    await msg.answer(f"◾ Шард <b>{sh.name}</b> удалён.", parse_mode="HTML")
+
+
+# --- Coupons ---
+
+@router.message(Command("create_coupon"))
+async def cmd_create_coupon(msg: Message, session: AsyncSession, user: User) -> None:
+    """/create_coupon <product=cardinal|script> [days=30] [expires_in_days=30]"""
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split()
+    if len(parts) < 2:
+        await msg.answer(
+            "Использование: <code>/create_coupon &lt;cardinal|script&gt; [days=30] [expires_in_days=30]</code>",
+            parse_mode="HTML",
+        )
+        return
+    try:
+        product = ProductKind(parts[1].strip().lower())
+    except ValueError:
+        await msg.answer("Продукт должен быть <code>cardinal</code> или <code>script</code>.", parse_mode="HTML")
+        return
+    days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
+    expires_in = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 30
+
+    from app.repos import coupons as coupons_repo
+
+    cp = await coupons_repo.create(
+        session,
+        product=product,
+        days=days,
+        issued_by=user.id,
+        expires_in_days=expires_in,
+    )
+    await session.commit()
+    await msg.answer(
+        f"<b>Купон создан</b>\n\n"
+        f"◾ Код: <code>{cp.code}</code>\n"
+        f"◾ Продукт: {product.value}\n"
+        f"◾ Срок: {days} дн.\n"
+        f"◾ Активен: {expires_in} дн.\n\n"
+        f"Юзер вводит этот код в /menu → Купить → «У меня купон».",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("coupons"))
+async def cmd_coupons(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        return
+    from app.repos import coupons as coupons_repo
+
+    rows = await coupons_repo.list_all(session)
+    if not rows:
+        await msg.answer("Купонов пока нет. Создай через /create_coupon.")
+        return
+    lines = ["<b>Купоны:</b>"]
+    for cp in rows[:30]:
+        used = f"used by {cp.used_by}" if cp.used_by else "free"
+        exp = "—" if not cp.expires_at else cp.expires_at.strftime("%Y-%m-%d")
+        lines.append(
+            f"  ◇ <code>{cp.code}</code> · {cp.product.value} · {cp.days}d · до {exp} · {used}"
+        )
+    if len(rows) > 30:
+        lines.append(f"\n<i>+ ещё {len(rows) - 30}</i>")
+    await msg.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("del_coupon"))
+async def cmd_del_coupon(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await msg.answer("Использование: <code>/del_coupon &lt;code&gt;</code>", parse_mode="HTML")
+        return
+    from app.repos import coupons as coupons_repo
+
+    ok = await coupons_repo.delete(session, parts[1].strip().upper())
+    await session.commit()
+    await msg.answer("Удалён." if ok else "Не найден.")
+
+
+# --- Subscription editing ---
+
+async def _resolve_user_id(text_arg: str) -> int | None:
+    """Accept either numeric ID or @username (numeric only here)."""
+    s = text_arg.strip().lstrip("@")
+    if s.isdigit():
+        return int(s)
+    return None
+
+
+@router.message(Command("grant_sub"))
+async def cmd_grant_sub(msg: Message, session: AsyncSession, user: User) -> None:
+    """/grant_sub <user_id> <product> [days=30]"""
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split()
+    if len(parts) < 3:
+        await msg.answer(
+            "Использование: <code>/grant_sub &lt;user_id&gt; &lt;cardinal|script&gt; [days=30]</code>",
+            parse_mode="HTML",
+        )
+        return
+    uid = await _resolve_user_id(parts[1])
+    if not uid:
+        await msg.answer("user_id должен быть числом.")
+        return
+    try:
+        product = ProductKind(parts[2].strip().lower())
+    except ValueError:
+        await msg.answer("Продукт должен быть cardinal или script.")
+        return
+    days = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 30
+
+    from app.repos import subscriptions as subs_repo
+
+    sub = await subs_repo.extend(session, uid, product, days)
+    await session.commit()
+    await msg.answer(
+        f"▣ Юзеру <code>{uid}</code> выдана подписка <b>{product.value}</b> до "
+        f"<code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code> (+{days} дн.)",
+        parse_mode="HTML",
+    )
+    try:
+        await msg.bot.send_message(
+            uid,
+            f"▣ Админ выдал тебе подписку <b>{product.value}</b> на {days} дн.\n"
+            f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
+            parse_mode="HTML",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@router.message(Command("add_days"))
+async def cmd_add_days(msg: Message, session: AsyncSession, user: User) -> None:
+    """Alias for /grant_sub — добавить дни."""
+    await cmd_grant_sub(msg, session, user)
+
+
+@router.message(Command("remove_days"))
+async def cmd_remove_days(msg: Message, session: AsyncSession, user: User) -> None:
+    """/remove_days <user_id> <product> <days>"""
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split()
+    if len(parts) < 4:
+        await msg.answer(
+            "Использование: <code>/remove_days &lt;user_id&gt; &lt;cardinal|script&gt; &lt;days&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+    uid = await _resolve_user_id(parts[1])
+    if not uid:
+        await msg.answer("user_id должен быть числом.")
+        return
+    try:
+        product = ProductKind(parts[2].strip().lower())
+    except ValueError:
+        await msg.answer("Продукт должен быть cardinal или script.")
+        return
+    if not parts[3].isdigit():
+        await msg.answer("days должен быть числом.")
+        return
+    days = int(parts[3])
+
+    from app.repos import subscriptions as subs_repo
+
+    existing = await subs_repo.get(session, uid, product)
+    if not existing:
+        await msg.answer("У юзера нет такой подписки.")
+        return
+    sub = await subs_repo.extend(session, uid, product, -days)
+    await session.commit()
+    await msg.answer(
+        f"◾ С юзера <code>{uid}</code> снято {days} дн. {product.value}. "
+        f"Истекает: <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("revoke_sub"))
+async def cmd_revoke_sub(msg: Message, session: AsyncSession, user: User) -> None:
+    """/revoke_sub <user_id> <product>"""
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split()
+    if len(parts) < 3:
+        await msg.answer(
+            "Использование: <code>/revoke_sub &lt;user_id&gt; &lt;cardinal|script&gt;</code>",
+            parse_mode="HTML",
+        )
+        return
+    uid = await _resolve_user_id(parts[1])
+    if not uid:
+        await msg.answer("user_id должен быть числом.")
+        return
+    try:
+        product = ProductKind(parts[2].strip().lower())
+    except ValueError:
+        await msg.answer("Продукт должен быть cardinal или script.")
+        return
+
+    from app.repos import subscriptions as subs_repo
+
+    sub = await subs_repo.get(session, uid, product)
+    if sub:
+        from app.utils.time import now_utc
+
+        sub.expires_at = now_utc()
+        await session.commit()
+    await msg.answer(f"◾ Подписка {product.value} у <code>{uid}</code> отозвана.", parse_mode="HTML")
+
+
+@router.message(Command("user_info"))
+async def cmd_user_info(msg: Message, session: AsyncSession, user: User) -> None:
+    """/user_info <user_id> — показать профиль и подписки."""
+    if not await _require_admin(session, user):
+        return
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await msg.answer("Использование: <code>/user_info &lt;user_id&gt;</code>", parse_mode="HTML")
+        return
+    uid = await _resolve_user_id(parts[1])
+    if not uid:
+        await msg.answer("user_id должен быть числом.")
+        return
+    from app.repos import subscriptions as subs_repo
+
+    target = await users_repo.by_id(session, uid)
+    if not target:
+        await msg.answer("Юзер не найден.")
+        return
+    subs = await subs_repo.list_for_user(session, uid)
+    lines = [
+        f"<b>Юзер</b> <code>{target.id}</code>",
+        f"◾ Имя: {target.first_name or '—'} (@{target.username or '—'})",
+        f"◾ Админ: {target.is_admin} · Бан: {target.is_blocked}",
+        f"◾ XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
+        "",
+        "<b>Подписки:</b>",
+    ]
+    if subs:
+        for s in subs:
+            lines.append(f"  ◆ {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}")
+    else:
+        lines.append("  ◇ нет")
+    await msg.answer("\n".join(lines), parse_mode="HTML")
+
+
+# --- Admin help ---
+
+@router.message(Command("admin_help"))
+async def cmd_admin_help(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        return
+    await msg.answer(
+        "<b>Админ-команды Mi Host</b>\n\n"
+        "<b>Подписки:</b>\n"
+        "<code>/grant_sub user_id cardinal|script [days=30]</code>\n"
+        "<code>/add_days user_id product days</code>\n"
+        "<code>/remove_days user_id product days</code>\n"
+        "<code>/revoke_sub user_id product</code>\n"
+        "<code>/user_info user_id</code>\n\n"
+        "<b>Купоны:</b>\n"
+        "<code>/create_coupon cardinal|script [days=30] [expires_in_days=30]</code>\n"
+        "<code>/coupons</code>  ·  <code>/del_coupon CODE</code>\n\n"
+        "<b>Шарды:</b>\n"
+        "<code>/add_shard NAME RENDER_API_KEY [capacity=4]</code>\n"
+        "<code>/shards</code> · <code>/pause_shard NAME</code> · <code>/resume_shard NAME</code> · <code>/drop_shard NAME</code>\n\n"
+        "<b>База / админы:</b>\n"
+        "<code>/rotate_db</code>  ·  <code>/addadmin user_id</code>  ·  <code>/stats</code>\n\n"
+        "<b>Контент:</b>\n"
+        "<code>/post_now</code>  ·  <code>/brand_channel</code>",
+        parse_mode="HTML",
+    )

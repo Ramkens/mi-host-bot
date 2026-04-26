@@ -57,8 +57,13 @@ async def _restore_tenants() -> None:
     import sys
 
     async with SessionLocal() as s:
+        # Only restore tenants belonging to this (master) process — shard-
+        # assigned tenants are owned by the corresponding worker.
         res = await s.execute(
-            select(Instance).where(Instance.status == InstanceStatus.LIVE)
+            select(Instance).where(
+                Instance.status == InstanceStatus.LIVE,
+                Instance.shard_id.is_(None),
+            )
         )
         items = list(res.scalars())
     for inst in items:
@@ -89,6 +94,25 @@ async def _restore_tenants() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     await init_db()
+
+    if settings.mihost_role == "worker":
+        # Headless mode: only the reconciliation loop. No Telegram, no
+        # scheduler, no admin handlers.
+        from app.services.shard_worker import run_worker_forever
+
+        worker_task = asyncio.create_task(run_worker_forever())
+        app.state.worker_task = worker_task
+        logger.info("Started in WORKER mode (shard=%s)", settings.mihost_shard_name)
+        try:
+            yield
+        finally:
+            worker_task.cancel()
+            from app.services.supervisor import supervisor
+
+            await supervisor.stop_all()
+        return
+
+    # ---- Master role (default) ----
     bot = bot_singleton()
     dp = build_dispatcher()
     app.state.bot = bot
@@ -112,7 +136,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     sched.start()
     app.state.scheduler = sched
 
-    # Restore tenants in the background.
+    # Restore tenants in the background. (Only for tenants assigned to master;
+    # shard-assigned tenants are restored by the worker on their shard.)
     asyncio.create_task(_restore_tenants())
 
     # If a DB rotation just completed, announce "готово".
