@@ -39,9 +39,25 @@ async def extend(
     product: ProductKind,
     days: int,
 ) -> Subscription:
+    return await extend_hours(session, user_id, product, hours=int(days) * 24)
+
+
+async def extend_hours(
+    session: AsyncSession,
+    user_id: int,
+    product: ProductKind,
+    hours: int,
+) -> Subscription:
+    """Hour-precision variant of :func:`extend`.
+
+ Positive values push `expires_at` forward (from now or its current
+ value, whichever is later), negative values roll it back (never past
+ "now" by the caller convention — callers that want to "expire now"
+ should set `expires_at = now_utc()` directly).
+ """
     sub = await get(session, user_id, product)
     base = max(now_utc(), sub.expires_at) if sub and sub.expires_at else now_utc()
-    new_expires = base + timedelta(days=days)
+    new_expires = base + timedelta(hours=hours)
     if sub is None:
         sub = Subscription(
             user_id=user_id, product=product, expires_at=new_expires

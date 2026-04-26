@@ -1,9 +1,9 @@
 """Mi Host entrypoint.
 
 * FastAPI hosts:
-    - /healthz         (used by Render & cron-job.org)
-    - /tg/webhook      (Telegram webhook target)
-    - /webhooks/cryptobot (CryptoBot payment notifications)
+ - /healthz (used by Render & cron-job.org)
+ - /tg/webhook (Telegram webhook target)
+ - /webhooks/cryptobot (CryptoBot payment notifications)
 * Aiogram dispatcher is wired to FastAPI via aiogram.webhook.
 * Background scheduler runs autoposts/funnel/keepalive.
 * Supervisor restores tenants on boot from the DB.
@@ -69,9 +69,16 @@ async def _restore_tenants() -> None:
     for inst in items:
         try:
             if inst.product == ProductKind.CARDINAL:
-                gk = (inst.config or {}).get("golden_key")
+                cfg = inst.config or {}
+                gk = cfg.get("golden_key")
                 if gk:
-                    await start_tenant(inst.id, golden_key=gk)
+                    await start_tenant(
+                        inst.id,
+                        golden_key=gk,
+                        telegram_token=cfg.get("tg_token", "") or "",
+                        secret_key_hash=cfg.get("tg_secret_hash") or None,
+                        proxy=cfg.get("proxy", "") or "",
+                    )
             else:
                 td = tenant_dir(inst.id)
                 if td.exists():
@@ -88,6 +95,55 @@ async def _restore_tenants() -> None:
                     )
         except Exception as exc:  # noqa: BLE001
             logger.warning("restore tenant %s: %s", inst.id, exc)
+
+
+async def _ensure_keepalive_cron() -> None:
+    """Re-apply the cron-job.org keep-alive config on every boot.
+
+ The contract we enforce: one GET job against ``/healthz``, enabled, firing
+ every minute, with failure notifications OFF so a cold-start 5xx doesn't
+ auto-disable the pinger. Idempotent — if mi-host-bot reboots a thousand
+ times the job just stays correctly configured.
+ """
+    from app.services.cron import CronJobClient, CronJobError
+
+    client = CronJobClient()
+    if not client.enabled:
+        logger.info("cron-job.org API key not set; skipping keep-alive bootstrap")
+        return
+    target = settings.public_url.rstrip("/") if settings.public_url else ""
+    if not target or "localhost" in target:
+        logger.info("public_url not usable; skipping keep-alive bootstrap")
+        return
+    url = f"{target}/healthz"
+    try:
+        job_id = await client.ensure_keepalive(
+            title="Mi Host keep-alive (1m)", url=url, every_minutes=1
+        )
+        logger.info("cron-job.org keep-alive ensured: job %s @ %s", job_id, url)
+    except CronJobError as exc:
+        logger.warning("cron-job.org bootstrap failed: %s", exc)
+
+
+async def _notify_admins_started(bot: Bot) -> None:
+    """Ping all admins in Telegram once the bot process is up."""
+    import os
+    from datetime import datetime, timezone
+
+    sha = (os.environ.get("RENDER_GIT_COMMIT") or "local")[:7]
+    branch = os.environ.get("RENDER_GIT_BRANCH", "").strip()
+    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    text = (
+        "<b>Mi Host запущен</b>\n\n"
+        f"• Коммит: <code>{sha}</code>"
+        f"{f' ({branch})' if branch else ''}\n"
+        f"• Время: <code>{when}</code>"
+    )
+    for aid in settings.admin_ids_list:
+        try:
+            await bot.send_message(aid, text, parse_mode="HTML")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("startup-notify admin %s failed: %s", aid, exc)
 
 
 @asynccontextmanager
@@ -145,6 +201,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     asyncio.create_task(announce_done_if_pending(bot))
 
+    asyncio.create_task(_notify_admins_started(bot))
+    asyncio.create_task(_ensure_keepalive_cron())
+
+    # Keep DB Instance.status honest about what supervisor is actually
+    # running. Without this, a dead process keeps showing as LIVE in
+    # /shards, admin Хостинги and the user's «Мои серверы».
+    from app.services.reconciler import run_reconciler_forever
+
+    asyncio.create_task(run_reconciler_forever())
+
     try:
         yield
     finally:
@@ -175,6 +241,46 @@ async def healthz() -> dict:
 @app.get("/ping")
 async def ping() -> dict:
     return {"pong": True}
+
+
+@app.get("/_dbg/tenant/{instance_id}")
+async def dbg_tenant(instance_id: int, request: Request) -> dict:
+    """Authed debug view of a tenant on this worker.
+
+    Auth: pass ``X-Mi-Secret`` header == ``SECRET_KEY``. Returns the
+    parsed _main.cfg sections (token masked) and the last lines of the
+    supervisor log tail. Used to debug why a Cardinal tenant won't
+    come up across master + worker boundary.
+    """
+    if request.headers.get("x-mi-secret") != settings.secret_key:
+        raise HTTPException(status_code=403, detail="forbidden")
+    from app.services.cardinal import _tenant_dir, read_main_cfg
+    from app.services.supervisor import supervisor as _sv
+
+    td = _tenant_dir(instance_id)
+    cfg_data = None
+    if (td / "configs" / "_main.cfg").exists():
+        sections = read_main_cfg(instance_id) or {}
+        # mask sensitive
+        out = {}
+        for sname, kv in sections.items():
+            out[sname] = {}
+            for k, v in kv.items():
+                if k.lower() in {"golden_key", "token", "secretkeyhash", "proxy"}:
+                    out[sname][k] = f"<set len={len(v)}>" if v else "<empty>"
+                else:
+                    out[sname][k] = v
+        cfg_data = out
+    state = _sv.tenants.get(instance_id)
+    return {
+        "tenant_dir_exists": td.exists(),
+        "tenant_dir": str(td),
+        "cfg": cfg_data,
+        "running": _sv.is_running(instance_id),
+        "restart_count": getattr(state, "restart_count", None) if state else None,
+        "stop_requested": getattr(state, "stop_requested", None) if state else None,
+        "log_tail": list(getattr(state, "log_tail", [])) if state else [],
+    }
 
 
 @app.post(settings.webhook_path)

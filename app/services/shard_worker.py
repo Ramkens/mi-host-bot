@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.db.base import SessionLocal
-from app.db.models import Instance, ProductKind, Shard
+from app.db.models import Instance, InstanceStatus, ProductKind, Shard
 from app.repos import shards as shards_repo
 from app.services.cardinal import start_tenant
 from app.services.script_host import tenant_dir
@@ -54,11 +54,27 @@ async def _resolve_shard() -> Optional[Shard]:
 async def _start_instance(inst: Instance) -> None:
     """Spawn the subprocess for an instance whose desired_state=live."""
     if inst.product == ProductKind.CARDINAL:
-        gk = (inst.config or {}).get("golden_key")
+        cfg = inst.config or {}
+        gk = cfg.get("golden_key") or ""
+        tok = cfg.get("tg_token") or ""
+        h = cfg.get("tg_secret_hash") or ""
         if not gk:
-            logger.warning("instance %s: no golden_key, skipping", inst.id)
+            logger.warning(
+                "instance %s: no golden_key (cfg keys=%s); skipping",
+                inst.id, list(cfg.keys()),
+            )
             return
-        await start_tenant(inst.id, golden_key=gk)
+        logger.info(
+            "instance %s: starting cardinal gk_len=%d tok_len=%d hash_len=%d",
+            inst.id, len(gk), len(tok), len(h),
+        )
+        await start_tenant(
+            inst.id,
+            golden_key=gk,
+            telegram_token=tok,
+            secret_key_hash=h or None,
+            proxy=cfg.get("proxy", "") or "",
+        )
     else:
         td = tenant_dir(inst.id)
         if not td.exists():
@@ -100,6 +116,13 @@ async def _reconcile_once(shard_id: int) -> None:
                     obj = await s2.get(Instance, inst.id)
                     if obj:
                         obj.actual_state = "live"
+                        if obj.status in (
+                            InstanceStatus.PENDING,
+                            InstanceStatus.DEPLOYING,
+                            InstanceStatus.FAILED,
+                            InstanceStatus.SUSPENDED,
+                        ):
+                            obj.status = InstanceStatus.LIVE
                         await s2.commit()
             elif desired == "stopped" and running:
                 await _stop_instance(inst.id)
@@ -109,13 +132,25 @@ async def _reconcile_once(shard_id: int) -> None:
                         obj.actual_state = "stopped"
                         await s2.commit()
             else:
-                # Already in desired state. Sync actual_state if drift.
+                # Already in desired state. Sync actual_state + drag
+                # status out of stale FAILED/DEPLOYING when we can.
                 actual_now = "live" if running else "stopped"
-                if inst.actual_state != actual_now:
-                    async with SessionLocal() as s2:
-                        obj = await s2.get(Instance, inst.id)
-                        if obj:
+                async with SessionLocal() as s2:
+                    obj = await s2.get(Instance, inst.id)
+                    if obj:
+                        dirty = False
+                        if obj.actual_state != actual_now:
                             obj.actual_state = actual_now
+                            dirty = True
+                        if running and obj.status in (
+                            InstanceStatus.PENDING,
+                            InstanceStatus.DEPLOYING,
+                            InstanceStatus.FAILED,
+                            InstanceStatus.SUSPENDED,
+                        ):
+                            obj.status = InstanceStatus.LIVE
+                            dirty = True
+                        if dirty:
                             await s2.commit()
         except Exception:  # noqa: BLE001
             logger.exception("reconcile instance %s failed", inst.id)

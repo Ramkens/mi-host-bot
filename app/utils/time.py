@@ -25,7 +25,7 @@ def fmt_msk(dt: datetime, with_seconds: bool = False) -> str:
     fmt = "%d.%m.%Y %H:%M"
     if with_seconds:
         fmt = "%d.%m.%Y %H:%M:%S"
-    return dt.strftime(fmt) + " МСК"
+    return dt.strftime(fmt) + "МСК"
 
 
 def humanize_delta(delta: timedelta) -> str:
@@ -42,4 +42,4 @@ def humanize_delta(delta: timedelta) -> str:
         parts.append(f"{hours} ч")
     if minutes and not days:
         parts.append(f"{minutes} мин")
-    return " ".join(parts) or "<1 мин"
+    return "".join(parts) or "<1 мин"

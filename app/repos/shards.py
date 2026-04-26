@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Instance, Shard, ShardStatus
+from app.db.models import Instance, InstanceStatus, Shard, ShardStatus
 from app.utils.crypto import decrypt, encrypt
 from app.utils.time import now_utc
 
@@ -115,11 +115,18 @@ async def get_api_key(session: AsyncSession, shard_id: int) -> Optional[str]:
 
 
 async def occupancy(session: AsyncSession) -> dict[int, int]:
-    """Return {shard_id: live_instance_count}."""
+    """Return {shard_id: live_instance_count}.
+
+    A slot is 'occupied' if its Instance row is NOT in the terminal
+    DELETED state. Using `desired_state == "live"` alone was too narrow
+    (it missed PENDING) AND too wide (DELETED rows that someone forgot
+    to flip kept counting). Filtering by `status != DELETED` matches
+    what the user actually sees as a live server.
+    """
     res = await session.execute(
         select(Instance.shard_id, func.count(Instance.id))
         .where(Instance.shard_id.is_not(None))
-        .where(Instance.desired_state == "live")
+        .where(Instance.status != InstanceStatus.DELETED)
         .group_by(Instance.shard_id)
     )
     return {sid: cnt for sid, cnt in res.all()}

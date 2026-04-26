@@ -2,11 +2,21 @@
 from __future__ import annotations
 
 import logging
+from io import BytesIO
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import (
+    CallbackQuery,
+    Document,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db.models import InstanceStatus, ProductKind, User
 from app.keyboards.main import back_to_menu, instance_actions
 from app.repos import instances as inst_repo
@@ -18,6 +28,28 @@ logger = logging.getLogger(__name__)
 router = Router(name="instances")
 
 
+class SetupFSM(StatesGroup):
+    awaiting_golden_key = State()
+    awaiting_tg_token = State()
+    awaiting_pw_choice = State()
+    awaiting_pw_custom = State()
+    awaiting_zip = State()
+
+
+def _status_icon(st: InstanceStatus) -> str:
+    # Green = running, yellow = in-between (pending/deploying/suspended),
+    # red = failed/deleted. These three are the only decorative emoji in the
+    # whole bot UI (per user preference).
+    return {
+        InstanceStatus.LIVE: "🟢",
+        InstanceStatus.DEPLOYING: "🟡",
+        InstanceStatus.PENDING: "🟡",
+        InstanceStatus.SUSPENDED: "🟡",
+        InstanceStatus.FAILED: "🔴",
+        InstanceStatus.DELETED: "🔴",
+    }.get(st, "🟡")
+
+
 @router.callback_query(F.data == "instances")
 async def cb_instances(
     cb: CallbackQuery, session: AsyncSession, user: User
@@ -25,8 +57,9 @@ async def cb_instances(
     items = await inst_repo.list_for_user(session, user.id)
     if not items:
         text = (
-            "<b>Мои инстансы</b>\n\n"
-            "У вас нет инстансов. Купите подписку и создайте инстанс из меню «Купить»."
+            "<b>Мои серверы</b>\n\n"
+            "Серверов пока нет. Купи подписку через /menu → Купить "
+            "или активируй купон через /coupon."
         )
         if cb.message:
             try:
@@ -39,22 +72,27 @@ async def cb_instances(
                 )
         await cb.answer()
         return
-    lines = ["<b>Мои инстансы</b>", ""]
+    lines = ["<b>Мои серверы</b>", ""]
     rows = []
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     for inst in items:
-        status_dot = "🟢" if inst.status == InstanceStatus.LIVE else "⚪"
-        lines.append(f"{status_dot} #{inst.id} · {inst.product.value} · {inst.status.value}")
+        tier = ((inst.config or {}).get("tier") or "std").lower()
+        tier_suffix = "PRO" if tier == "pro" else ""
+        lines.append(
+            f"{_status_icon(inst.status)} #{inst.id} · "
+            f"{inst.product.value}{tier_suffix} · {inst.status.value}"
+        )
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"#{inst.id} · {inst.product.value}",
+                    text=f"{_status_icon(inst.status)} #{inst.id} · "
+                         f"{inst.product.value}{tier_suffix}",
                     callback_data=f"inst:open:{inst.id}",
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="« В меню", callback_data="menu")])
+    rows.append([InlineKeyboardButton(text="В меню", callback_data="menu")])
     text = "\n".join(lines)
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     if cb.message:
@@ -75,15 +113,34 @@ async def cb_inst_open(
         await cb.answer("Не найдено", show_alert=True)
         return
     s = supervisor.status(inst_id)
+    tier = ((inst.config or {}).get("tier") or "std").lower()
+    tier_suffix = "PRO" if tier == "pro" else ""
+    need_setup = inst.status == InstanceStatus.PENDING or (
+        inst.product == ProductKind.CARDINAL
+        and not (inst.config or {}).get("golden_key")
+    )
+    setup_hint = ""
+    if need_setup:
+        if inst.product == ProductKind.CARDINAL:
+            setup_hint = (
+                "\n\n <b>Нужна настройка</b> — нажми « Настроить» и пришли "
+                "<code>golden_key</code>."
+            )
+        else:
+            setup_hint = (
+                "\n\n <b>Нужна настройка</b> — нажми « Настроить» и "
+                "загрузи <code>.zip</code> со скриптом."
+            )
     text = (
-        f"<b>Инстанс #{inst.id}</b>\n"
-        f"Продукт: {inst.product.value}\n"
-        f"Статус (БД): {inst.status.value}\n"
-        f"Процесс: {'жив' if s.get('alive') else 'нет'}\n"
-        f"PID: {s.get('pid') or '—'}\n"
-        f"Uptime: {s.get('uptime', 0)} сек\n"
-        f"Перезапусков: {s.get('restart_count', 0)}\n"
-        f"Render service: {inst.render_service_id or '—'}\n"
+        f"<b> Сервер #{inst.id}</b>\n"
+        f"• Продукт: {inst.product.value}{tier_suffix}\n"
+        f"⟳ Статус (БД): {_status_icon(inst.status)} {inst.status.value}\n"
+        f" Процесс: {'жив' if s.get('alive') else 'нет'}\n"
+        f" PID: {s.get('pid') or '—'}\n"
+        f" Uptime: {s.get('uptime', 0)} сек\n"
+        f"↻ Перезапусков: {s.get('restart_count', 0)}\n"
+        f" Render service: {inst.render_service_id or '—'}"
+        f"{setup_hint}"
     )
     if cb.message:
         try:
@@ -111,13 +168,28 @@ async def cb_inst_start(
         await cb.answer("Не найдено", show_alert=True)
         return
     if inst.product == ProductKind.CARDINAL:
-        from app.services.cardinal import start_tenant
-
-        gk = inst.config.get("golden_key")
+        cfg = inst.config or {}
+        gk = cfg.get("golden_key")
         if not gk:
             await cb.answer("Сначала задайте golden_key", show_alert=True)
             return
-        await start_tenant(inst.id, golden_key=gk)
+        if inst.shard_id is None:
+            from app.services.cardinal import start_tenant
+
+            await start_tenant(
+                inst.id,
+                golden_key=gk,
+                telegram_token=cfg.get("tg_token", "") or "",
+                secret_key_hash=cfg.get("tg_secret_hash") or None,
+                proxy=cfg.get("proxy", "") or "",
+            )
+        else:
+            # Shard-assigned: master's supervisor must not spawn it. Just
+            # flip desired_state and let the worker pick it up on its
+            # next reconcile pass (~10s).
+            inst.desired_state = "live"
+            inst.status = InstanceStatus.DEPLOYING
+            await session.commit()
     else:
         # script: spawn from existing tenant dir if exists
         from app.services.script_host import tenant_dir
@@ -153,8 +225,12 @@ async def cb_inst_stop(
     if not inst or inst.user_id != user.id:
         await cb.answer("Не найдено", show_alert=True)
         return
-    await supervisor.stop(inst.id)
+    inst.desired_state = "stopped"
+    if inst.shard_id is None:
+        await supervisor.stop(inst.id)
+        inst.actual_state = "stopped"
     inst.status = InstanceStatus.SUSPENDED
+    await session.commit()
     await cb.answer("Остановлено")
     await cb_inst_open(cb, session, user)
 
@@ -168,8 +244,35 @@ async def cb_inst_restart(
     if not inst or inst.user_id != user.id:
         await cb.answer("Не найдено", show_alert=True)
         return
-    await supervisor.restart(inst.id)
+    cfg = inst.config or {}
+    inst.desired_state = "live"
+    if inst.shard_id is None:
+        if inst.product == ProductKind.CARDINAL:
+            from app.services.cardinal import start_tenant
+
+            gk = cfg.get("golden_key")
+            if gk:
+                # Re-run start_tenant rather than supervisor.restart so
+                # _main.cfg is rewritten with the latest tg_token / hash.
+                await start_tenant(
+                    inst.id,
+                    golden_key=gk,
+                    telegram_token=cfg.get("tg_token", "") or "",
+                    secret_key_hash=cfg.get("tg_secret_hash") or None,
+                    proxy=cfg.get("proxy", "") or "",
+                )
+            else:
+                await supervisor.restart(inst.id)
+        else:
+            await supervisor.restart(inst.id)
+    else:
+        # Shard-assigned: ask the worker to do a full restart by
+        # bouncing desired_state.
+        inst.desired_state = "stopped"
+        await session.commit()
+        inst.desired_state = "live"
     inst.status = InstanceStatus.LIVE
+    await session.commit()
     await cb.answer("Перезапущено")
     await cb_inst_open(cb, session, user)
 
@@ -201,3 +304,384 @@ async def cb_inst_status(
     cb: CallbackQuery, session: AsyncSession, user: User
 ) -> None:
     await cb_inst_open(cb, session, user)
+
+
+# --- Setup flow: supply missing golden_key / .zip for PENDING instances ----
+
+@router.callback_query(F.data.startswith("inst:setup:"))
+async def cb_inst_setup(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    inst_id = int(cb.data.split(":")[2])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    await state.update_data(setup_inst_id=inst.id)
+    if inst.product == ProductKind.CARDINAL:
+        await state.set_state(SetupFSM.awaiting_golden_key)
+        if cb.message:
+            await cb.message.answer(
+                "<b>Cardinal · 1/2</b>\n\n"
+                "Пришли <code>golden_key</code> (32 символа).\n"
+                "<i>funpay.com → DevTools → Application → Cookies</i>\n\n"
+                "/cancel — отмена",
+                parse_mode="HTML",
+            )
+    else:
+        await state.set_state(SetupFSM.awaiting_zip)
+        if cb.message:
+            await cb.message.answer(
+                "Пришли .zip-архив с Python-проектом одним документом (до 25 MB).\n"
+                "Внутри — <code>main.py</code> и опц. <code>requirements.txt</code>.\n\n"
+                "/cancel — отмена.",
+                parse_mode="HTML",
+            )
+    await cb.answer()
+
+
+@router.message(SetupFSM.awaiting_golden_key)
+async def setup_receive_key(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    text = (msg.text or "").strip()
+    if text == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    if len(text) != 32:
+        await msg.answer(
+            "golden_key должен быть 32 символа. Скопируй cookie с funpay.com целиком."
+        )
+        return
+    await state.update_data(setup_golden_key=text)
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await state.set_state(SetupFSM.awaiting_tg_token)
+    await msg.answer(
+        "<b>Cardinal · 2/2</b>\n\n"
+        "Пришли токен Telegram-бота (<code>@BotFather → /newbot</code>).\n"
+        "Через него ты будешь управлять Cardinal.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(SetupFSM.awaiting_tg_token)
+async def setup_receive_tg_token(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import validate_tg_token
+
+    raw = (msg.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    if not validate_tg_token(raw):
+        await msg.answer(
+            "Токен не подходит. Формат: <code>123456:ABC-DEF...</code>\n"
+            "Скопируй его целиком у <code>@BotFather</code>.",
+            parse_mode="HTML",
+        )
+        return
+    await state.update_data(setup_tg_token=raw)
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await state.set_state(SetupFSM.awaiting_pw_choice)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="↻ Сгенерировать надёжный пароль",
+                    callback_data="setup:pw:gen",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Придумаю свой",
+                    callback_data="setup:pw:custom",
+                )
+            ],
+        ]
+    )
+    await msg.answer(
+        "<b>Cardinal · пароль</b>\n\n"
+        "Этим паролем ты будешь входить в свой Telegram-бот Cardinal. "
+        "Можно сгенерировать автоматически или задать самому.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(SetupFSM.awaiting_pw_choice, F.data == "setup:pw:gen")
+async def setup_cb_pw_gen(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import generate_password, hash_password
+
+    pw = generate_password()
+    await state.update_data(setup_tg_pw_plain=pw, setup_tg_pw_hash=hash_password(pw))
+    if cb.message:
+        try:
+            await cb.message.delete()
+        except Exception:  # noqa: BLE001
+            pass
+        await _setup_finalize_cardinal(cb.message, state, session, user)
+    await cb.answer()
+
+
+@router.callback_query(SetupFSM.awaiting_pw_choice, F.data == "setup:pw:custom")
+async def setup_cb_pw_custom(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SetupFSM.awaiting_pw_custom)
+    if cb.message:
+        await cb.message.answer(
+            "Пришли пароль одним сообщением.\n"
+            "<i>Требования:</i> минимум 8 символов, заглавные + строчные буквы "
+            "и хотя бы одна цифра.",
+            parse_mode="HTML",
+        )
+    await cb.answer()
+
+
+@router.message(SetupFSM.awaiting_pw_custom)
+async def setup_receive_pw_custom(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import hash_password, validate_password
+
+    pw = (msg.text or "").strip()
+    if pw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    ok, err = validate_password(pw)
+    if not ok:
+        await msg.answer(f" {err}\nПопробуй ещё раз.")
+        return
+    await state.update_data(setup_tg_pw_plain=pw, setup_tg_pw_hash=hash_password(pw))
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await _setup_finalize_cardinal(msg, state, session, user)
+
+
+async def _setup_finalize_cardinal(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    data = await state.get_data()
+    inst_id = data.get("setup_inst_id")
+    if not inst_id:
+        await state.clear()
+        return
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id:
+        await state.clear()
+        return
+    gk = data.get("setup_golden_key") or (inst.config or {}).get("golden_key") or ""
+    tg_token = data.get("setup_tg_token", "") or ""
+    tg_pw_plain = data.get("setup_tg_pw_plain", "") or ""
+    tg_pw_hash = data.get("setup_tg_pw_hash", "") or ""
+    inst.config = {
+        **(inst.config or {}),
+        "golden_key": gk,
+        "tg_token": tg_token,
+        "tg_secret_hash": tg_pw_hash,
+    }
+    inst.status = InstanceStatus.DEPLOYING
+    inst.desired_state = "live"
+    await session.flush()
+    if inst.shard_id is None:
+        try:
+            from app.services.cardinal import start_tenant
+
+            await start_tenant(
+                inst.id,
+                golden_key=gk,
+                telegram_token=tg_token,
+                secret_key_hash=tg_pw_hash,
+            )
+            inst.status = InstanceStatus.LIVE
+            inst.actual_state = "live"
+        except Exception:  # noqa: BLE001
+            logger.exception("start cardinal failed in setup")
+            inst.status = InstanceStatus.FAILED
+    await session.commit()
+    await msg.answer(
+        f"<b> Спасибо!</b> Сервер #{inst.id} настроен.\n\n"
+        f"• Пароль от Telegram-бота Cardinal: <code>{tg_pw_plain}</code>\n"
+        f"<i>Сохрани — показываю один раз.</i>\n\n"
+        f"• Бот запустится в течение ~5 минут.\n"
+        f"Как только будет готов — напиши своему Telegram-боту "
+        f"<code>/start</code> и введи этот пароль.",
+        parse_mode="HTML",
+        reply_markup=instance_actions(inst.id, inst.product.value),
+    )
+    await state.clear()
+
+
+@router.message(SetupFSM.awaiting_zip, F.document)
+async def setup_receive_zip(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    doc: Document = msg.document  # type: ignore[assignment]
+    if not doc.file_name or not doc.file_name.lower().endswith(".zip"):
+        await msg.answer("Нужен .zip файл.")
+        return
+    if doc.file_size and doc.file_size > 25 * 1024 * 1024:
+        await msg.answer("Слишком большой архив (>25 MB).")
+        return
+    data = await state.get_data()
+    inst_id = data.get("setup_inst_id")
+    if not inst_id:
+        await state.clear()
+        return
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id:
+        await state.clear()
+        return
+    bio = BytesIO()
+    await msg.bot.download(doc, destination=bio)
+    zip_bytes = bio.getvalue()
+    tier = ((inst.config or {}).get("tier") or "std").lower()
+    ram_mb = settings.script_pro_ram_mb if tier == "pro" else settings.script_std_ram_mb
+
+    from app.services import script_host
+
+    inst.status = InstanceStatus.DEPLOYING
+    inst.desired_state = "live"
+    await session.flush()
+    try:
+        analysis, spec = await script_host.deploy(inst.id, zip_bytes, ram_mb=ram_mb)
+        inst.risk_score = analysis.risk_score
+        inst.risk_report = analysis.report
+        if not analysis.ok:
+            inst.status = InstanceStatus.FAILED
+            await session.commit()
+            await msg.answer(
+                "Архив не прошёл безопасный анализ. "
+                f"{analysis.report or ''}".strip(),
+                reply_markup=instance_actions(inst.id, inst.product.value),
+            )
+            await state.clear()
+            return
+        if spec is not None:
+            inst.config = {
+                **(inst.config or {}),
+                "build_cmd": spec.build_cmd,
+                "start_cmd": spec.start_cmd,
+                "env_keys": list(spec.env_template.keys()),
+                "entrypoint": analysis.entrypoint,
+            }
+        inst.status = InstanceStatus.LIVE
+        inst.actual_state = "live"
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("deploy script failed in setup")
+        inst.status = InstanceStatus.FAILED
+        await session.commit()
+        await msg.answer(
+            f" Не удалось развернуть: {exc}",
+            reply_markup=instance_actions(inst.id, inst.product.value),
+        )
+        await state.clear()
+        return
+    await session.commit()
+    await msg.answer(
+        f" Сервер #{inst.id} настроен и запущен.",
+        reply_markup=instance_actions(inst.id, inst.product.value),
+    )
+    await state.clear()
+
+
+@router.message(SetupFSM.awaiting_zip)
+async def setup_reject_non_zip(msg: Message) -> None:
+    await msg.answer("Пришли .zip как документ.")
+
+
+@router.callback_query(F.data.startswith("inst:drop:ask:"))
+async def cb_drop_ask(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    if cb.message:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Да, удалить", callback_data=f"inst:drop:yes:{inst.id}"
+                    ),
+                    InlineKeyboardButton(
+                        text="Отмена", callback_data=f"inst:open:{inst.id}"
+                    ),
+                ]
+            ]
+        )
+        try:
+            await cb.message.edit_text(
+                f"<b>Удалить сервер #{inst.id}?</b>\n\n"
+                f"Файлы инстанса будут стёрты с диска. Подписка сохранится — "
+                f"можешь потом залить новый конфиг.",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            await cb.message.answer(
+                f"<b>Удалить сервер #{inst.id}?</b>",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("inst:drop:yes:"))
+async def cb_drop_confirm(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    try:
+        await supervisor.remove(inst.id)
+    except Exception:
+        pass
+    freed = 0
+    if inst.product == ProductKind.CARDINAL:
+        try:
+            freed = remove_tenant_dir(inst.id) or 0
+        except Exception:
+            pass
+    else:
+        try:
+            freed = remove_script(inst.id) or 0
+        except Exception:
+            pass
+    inst.status = InstanceStatus.DELETED
+    inst.desired_state = "stopped"
+    inst.actual_state = "deleted"
+    await session.commit()
+    if cb.message:
+        try:
+            await cb.message.edit_text(
+                f"Сервер #{inst.id} удалён. Освобождено {freed // 1024} KB.",
+                parse_mode="HTML",
+                reply_markup=back_to_menu(),
+            )
+        except Exception:
+            await cb.message.answer(
+                f"Сервер #{inst.id} удалён. Освобождено {freed // 1024} KB.",
+                parse_mode="HTML",
+                reply_markup=back_to_menu(),
+            )
+    await cb.answer("Удалил.")

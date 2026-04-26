@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.models import User
 from app.keyboards.main import back_to_menu, main_menu
+from app.repos import instances as inst_repo
 from app.repos import settings as settings_repo
 from app.repos import subscriptions as subs_repo
 from app.repos import users as users_repo
@@ -38,25 +39,48 @@ def _ensure_assets() -> Path:
 async def _greeting_text(session: AsyncSession, user: User) -> str:
     subs = await subs_repo.list_for_user(session, user.id)
     free_card = await free_cardinal_slots(session)
+    instances = await inst_repo.list_for_user(session, user.id)
     lines = [
-        "<b>▰▰▰  MI HOST  ▰▰▰</b>",
-        "<i>хостинг FunPay Cardinal · 40 ₽/мес</i>",
-        "<i>хостинг кастом-скриптов · 50 ₽ (130 MB) / 150 ₽ (512 MB)</i>",
+        "<b>MI HOST</b>",
+        "<i>хостинг FunPay Cardinal — 40 ₽ / мес</i>",
+        "<i>хостинг кастом-скриптов — 50 ₽ STD / 150 ₽ PRO</i>",
         "",
-        f"◾ Свободных серверов: <b>{free_card}</b> (под Cardinal)",
+        f"Свободных серверов под Cardinal: <b>{free_card}</b>",
         "",
-        f"◾ <b>{user.first_name or 'юзер'}</b>  ·  id <code>{user.id}</code>",
-        f"◾ lvl {user.level}  ·  xp {user.xp}  ·  coins {user.coins}",
+        f"<b>{user.first_name or 'юзер'}</b> · id <code>{user.id}</code>",
     ]
     active_subs = [s for s in subs if s.expires_at > now_utc()]
     if active_subs:
         lines.append("")
         lines.append("<b>Активные подписки</b>")
         for s in active_subs:
-            lines.append(f"  ◆ {s.product.value} — до <code>{fmt_msk(s.expires_at)}</code>")
+            lines.append(
+                f"  • {s.product.value} — до <code>{fmt_msk(s.expires_at)}</code>"
+            )
     else:
         lines.append("")
-        lines.append("<i>◇ нет активных подписок · /menu → купить</i>")
+        lines.append("<i>· нет активных подписок · /menu → Купить</i>")
+    if instances:
+        lines.append("")
+        lines.append("<b>Серверы</b>")
+        status_icon = {
+            "live": "🟢",
+            "deploying": "🟡",
+            "pending": "🟡",
+            "suspended": "🟡",
+            "failed": "🔴",
+            "deleted": "🔴",
+        }
+        for inst in instances[:5]:
+            tier = ((inst.config or {}).get("tier") or "std").lower()
+            tier_suffix = "PRO" if tier == "pro" else ""
+            ico = status_icon.get(inst.status.value, "🟡")
+            lines.append(
+                f"  {ico} #{inst.id} · {inst.product.value}{tier_suffix} · "
+                f"{inst.status.value}"
+            )
+        if len(instances) > 5:
+            lines.append(f"  <i>+ ещё {len(instances) - 5}</i>")
     return "\n".join(lines)
 
 
@@ -95,8 +119,10 @@ async def cmd_menu(msg: Message, session: AsyncSession, user: User) -> None:
 @router.callback_query(F.data == "menu")
 async def cb_menu(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if cb.message:
+        img = _ensure_assets()
         text = await _greeting_text(session, user)
         admin = await is_admin(session, user.id)
+        # Try to edit in place if the current message already has a photo.
         try:
             await cb.message.edit_caption(
                 caption=text,
@@ -104,8 +130,13 @@ async def cb_menu(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
                 reply_markup=main_menu(is_admin=admin),
             )
         except Exception:
-            await cb.message.answer(
-                text, parse_mode="HTML", reply_markup=main_menu(is_admin=admin)
+            # Text-only message (or cross-thread edit) — send a fresh photo
+            # so /menu always looks the same regardless of entry point.
+            await cb.message.answer_photo(
+                photo=FSInputFile(str(img)),
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=main_menu(is_admin=admin),
             )
     await cb.answer()
 
@@ -136,8 +167,8 @@ async def cb_support(cb: CallbackQuery) -> None:
     admin_id = settings.admin_ids_list[0] if settings.admin_ids_list else 0
     text = (
         "<b>Поддержка</b>\n\n"
-        f"◾ Админ: <a href=\"tg://user?id={admin_id}\">написать в чат</a>\n"
-        "◾ Время ответа: до 12 часов\n\n"
+        f"• Админ: <a href=\"tg://user?id={admin_id}\">написать в чат</a>\n"
+        "• Время ответа: до 12 часов\n\n"
         "<b>Хочешь оплатить другой криптой?</b>\n"
         "Напиши админу: «оплата TON/BTC/ETH/…», он скинет адрес и вручную выдаст подписку.\n\n"
         "<i>Перед обращением — глянь /menu → «Мои инстансы» → Логи/Статус.</i>"

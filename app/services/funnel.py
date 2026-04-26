@@ -38,8 +38,8 @@ async def _mark_reminded(s, key: str) -> None:
 async def remind_expiring_subs(bot: "Bot") -> int:
     """Send a 3-days-before reminder asking the user to back up their data.
 
-    Sent once per (user, sub, expires_at) so we don't spam.
-    """
+ Sent once per (user, sub, expires_at) so we don't spam.
+ """
     sent = 0
     async with SessionLocal() as s:
         # 3-day window: subs expiring in (3, 3.5) days from now → fires once a
@@ -70,7 +70,7 @@ async def remind_expiring_subs(bot: "Bot") -> int:
 
 def _expiry_message(sub: Subscription) -> str:
     base = (
-        "◾ <b>Подписка скоро истечёт</b>\n\n"
+        "• <b>Подписка скоро истечёт</b>\n\n"
         f"Продукт: <b>{sub.product.value}</b>\n"
         f"Истекает: <code>{fmt_msk(sub.expires_at)}</code> "
         f"(через {humanize_delta(sub.expires_at - now_utc())})\n\n"
@@ -101,7 +101,7 @@ async def reach_out_to_churned(bot: "Bot") -> int:
         try:
             await bot.send_message(
                 sub.user_id,
-                "◇ Скучаем.\n\n"
+                "· Скучаем.\n\n"
                 "Подписка Mi Host истекла 3 дня назад. Можешь продлить в любой момент — /menu.",
             )
             sent += 1
@@ -122,7 +122,7 @@ async def remind_unpaid_invoices(bot: "Bot") -> int:
         try:
             await bot.send_message(
                 p.user_id,
-                "◾ У тебя есть неоплаченный счёт.\n\n"
+                "• У тебя есть неоплаченный счёт.\n\n"
                 f"Сумма: {p.amount_rub}₽\n"
                 f"Оплата: {p.pay_url}\n\n"
                 "После оплаты подписка активируется автоматически.",

@@ -8,15 +8,19 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ProductKind, User
 from app.keyboards.main import (
     admin_back,
-    admin_coupon_days,
-    admin_coupon_pick,
+    admin_coupon_pick_product,
     admin_coupons_menu,
     admin_export_menu,
     admin_menu,
@@ -45,6 +49,7 @@ class AdminFSM(StatesGroup):
     awaiting_userinfo_id = State()
     # Coupon flow
     awaiting_coupon_del_code = State()
+    awaiting_coupon_params = State()
     # Shard flow
     awaiting_shard_add = State()
     awaiting_shard_toggle = State()
@@ -55,6 +60,42 @@ class AdminFSM(StatesGroup):
 
 async def _require_admin(session: AsyncSession, user: User) -> bool:
     return await is_admin(session, user.id)
+
+
+async def _ensure_placeholder_instance(
+    session: AsyncSession,
+    user_id: int,
+    product: ProductKind,
+    tier: str = "std",
+) -> None:
+    """Create a PENDING Instance row for the user if none exists yet.
+
+ When an admin grants a subscription (or a user redeems a coupon without
+ going through the buy flow), we want the user to see a server row in
+ 'Мои серверы' with a " Настроить" action so they can supply the
+ missing configuration. The instance stays PENDING until they do.
+ """
+    from app.db.models import InstanceStatus
+    from app.repos import instances as inst_repo
+
+    existing = await inst_repo.list_for_user(session, user_id, product)
+    if existing:
+        inst = existing[0]
+        new_cfg = dict(inst.config or {})
+        new_cfg.setdefault("tier", tier)
+        inst.config = new_cfg
+        return
+    inst = await inst_repo.create(
+        session,
+        user_id=user_id,
+        product=product,
+        name=f"{product.value}-{user_id}",
+        config={"tier": tier},
+    )
+    inst.status = InstanceStatus.PENDING
+    inst.desired_state = "live"
+    inst.actual_state = "stopped"
+    await session.flush()
 
 
 @router.callback_query(F.data == "admin")
@@ -176,7 +217,7 @@ async def cmd_add_admin(
         session.add(target)
     else:
         await users_repo.set_admin(session, target_id, True)
-    await msg.answer(f"✓ Админ {target_id} добавлен.")
+    await msg.answer(f" Админ {target_id} добавлен.")
 
 
 @router.message(Command("rmadmin"))
@@ -194,7 +235,7 @@ async def cmd_rm_admin(
         await msg.answer("Нельзя снять админку с себя.")
         return
     await users_repo.set_admin(session, target_id, False)
-    await msg.answer(f"✓ {target_id} больше не админ.")
+    await msg.answer(f" {target_id} больше не админ.")
 
 
 @router.message(AdminFSM.awaiting_new_admin)
@@ -216,7 +257,7 @@ async def receive_new_admin(
         session.add(target)
     else:
         await users_repo.set_admin(session, target_id, True)
-    await msg.answer(f"✓ Админ {target_id} добавлен.")
+    await msg.answer(f" Админ {target_id} добавлен.")
     await state.clear()
 
 
@@ -230,7 +271,7 @@ async def cb_brand(
     ok = await auto_brand(cb.bot)
     if cb.message:
         await cb.message.answer(
-            "✓ Канал брендирован" if ok else "Канал не настроен (CHANNEL_ID пуст).",
+            "Канал брендирован" if ok else "Канал не настроен (CHANNEL_ID пуст).",
             reply_markup=back_to_menu(),
         )
     await cb.answer()
@@ -246,7 +287,7 @@ async def cb_post_now(
     mid = await post_one(cb.bot)
     if cb.message:
         await cb.message.answer(
-            f"✓ Опубликовано (msg_id={mid})" if mid else "Канал не настроен.",
+            f" Опубликовано (msg_id={mid})" if mid else "Канал не настроен.",
             reply_markup=back_to_menu(),
         )
     await cb.answer()
@@ -269,7 +310,7 @@ async def cmd_rotate_db(msg: Message, session: AsyncSession, user: User) -> None
     """Force a Postgres rotation (admin only — for testing)."""
     if not await _require_admin(session, user):
         return
-    await msg.answer("⏳ Запускаю ротацию Postgres…")
+    await msg.answer("Запускаю ротацию Postgres…")
     from app.services.db_rotation import rotate_now
 
     result = await rotate_now(msg.bot, force=True)
@@ -280,7 +321,7 @@ async def cmd_rotate_db(msg: Message, session: AsyncSession, user: User) -> None
 
 @router.message(Command("add_shard"))
 async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None:
-    """Register a new shard:  /add_shard <name> <render_api_key> [capacity]"""
+    """Register a new shard: /add_shard <name> <render_api_key> [capacity]"""
     if not await _require_admin(session, user):
         return
     parts = (msg.text or "").split(maxsplit=3)
@@ -304,15 +345,15 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     try:
         owner_id = await rc.autodetect_owner()
     except Exception as exc:  # noqa: BLE001
-        await msg.answer(f"❌ API key недействителен: <code>{exc}</code>", parse_mode="HTML")
+        await msg.answer(f" API key недействителен: <code>{exc}</code>", parse_mode="HTML")
         return
     if not owner_id:
-        await msg.answer("❌ Не нашёл owner у этого API key.")
+        await msg.answer("Не нашёл owner у этого API key.")
         return
 
     existing = await shards_repo.by_name(session, name)
     if existing:
-        await msg.answer(f"❌ Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
+        await msg.answer(f" Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
         return
 
     shard = await shards_repo.create(
@@ -325,7 +366,7 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     await session.commit()
 
     await msg.answer(
-        f"✅ Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
+        f" Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
         f"Деплою воркер на этот аккаунт…",
         parse_mode="HTML",
     )
@@ -339,14 +380,14 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     await session.commit()
     if result.get("ok"):
         await msg.answer(
-            f"🚀 Воркер деплоится: <code>{result.get('service_id')}</code>\n"
+            f" Воркер деплоится: <code>{result.get('service_id')}</code>\n"
             f"URL: {result.get('service_url')}\n\n"
             "Жди ~3 минуты до первого heartbeat.",
             parse_mode="HTML",
         )
     else:
         await msg.answer(
-            f"⚠️ Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
+            f" Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
             parse_mode="HTML",
         )
 
@@ -367,7 +408,7 @@ async def cmd_shards(msg: Message, session: AsyncSession, user: User) -> None:
         load = occ.get(sh.id, 0)
         alive = shards_repo.is_alive(sh)
         seen = "никогда" if not sh.last_seen_at else sh.last_seen_at.strftime("%Y-%m-%d %H:%M")
-        marker = "🟢" if alive else "🔴"
+        marker = "" if alive else ""
         lines.append(
             f"{marker} <b>{sh.name}</b> · id={sh.id} · {load}/{sh.capacity} · {sh.status.value}\n"
             f"    service: <code>{sh.service_id or '-'}</code>\n"
@@ -393,7 +434,7 @@ async def cmd_pause_shard(msg: Message, session: AsyncSession, user: User) -> No
         return
     await shards_repo.set_status(session, sh.id, ShardStatus.PAUSED)
     await session.commit()
-    await msg.answer(f"⏸ Шард <b>{sh.name}</b> на паузе.", parse_mode="HTML")
+    await msg.answer(f" Шард <b>{sh.name}</b> на паузе.", parse_mode="HTML")
 
 
 @router.message(Command("resume_shard"))
@@ -413,13 +454,13 @@ async def cmd_resume_shard(msg: Message, session: AsyncSession, user: User) -> N
         return
     await shards_repo.set_status(session, sh.id, ShardStatus.ACTIVE)
     await session.commit()
-    await msg.answer(f"▶ Шард <b>{sh.name}</b> снова активен.", parse_mode="HTML")
+    await msg.answer(f" Шард <b>{sh.name}</b> снова активен.", parse_mode="HTML")
 
 
 @router.message(Command("drop_shard"))
 async def cmd_drop_shard(msg: Message, session: AsyncSession, user: User) -> None:
     """Delete a shard from the registry. Existing tenants on it become orphaned
-    until you /reassign or the shard goes back online."""
+ until you /reassign or the shard goes back online."""
     if not await _require_admin(session, user):
         return
     parts = (msg.text or "").split(maxsplit=1)
@@ -434,48 +475,80 @@ async def cmd_drop_shard(msg: Message, session: AsyncSession, user: User) -> Non
         return
     await shards_repo.delete(session, sh.id)
     await session.commit()
-    await msg.answer(f"◾ Шард <b>{sh.name}</b> удалён.", parse_mode="HTML")
+    await msg.answer(f"• Шард <b>{sh.name}</b> удалён.", parse_mode="HTML")
 
 
 # --- Coupons ---
 
 @router.message(Command("create_coupon"))
 async def cmd_create_coupon(msg: Message, session: AsyncSession, user: User) -> None:
-    """/create_coupon <product=cardinal|script> [days=30] [expires_in_days=30]"""
+    """/create_coupon <cardinal|script[:pro]> <hours> [max_uses=1] [valid_hours=720]
+
+ Examples:
+ /create_coupon cardinal 72 — 72h of Cardinal, 1 use, valid 30d
+ /create_coupon script:pro 168 5 — 7d PRO script, 5 uses, valid 30d
+ /create_coupon script 24 10 48 — 24h STD script, 10 uses, valid 48h
+ """
     if not await _require_admin(session, user):
         return
     parts = (msg.text or "").split()
-    if len(parts) < 2:
+    usage = (
+        "Использование: "
+        "<code>/create_coupon &lt;cardinal|script[:pro]&gt; &lt;hours&gt; "
+        "[max_uses=1] [valid_hours=720]</code>\n\n"
+        "Например: <code>/create_coupon script:pro 168 5</code>"
+    )
+    if len(parts) < 3:
+        await msg.answer(usage, parse_mode="HTML")
+        return
+    product_raw = parts[1].strip().lower()
+    tier = "std"
+    if ":" in product_raw:
+        product_str, tier = product_raw.split(":", 1)
+    else:
+        product_str = product_raw
+    try:
+        product = ProductKind(product_str)
+    except ValueError:
         await msg.answer(
-            "Использование: <code>/create_coupon &lt;cardinal|script&gt; [days=30] [expires_in_days=30]</code>",
+            "Продукт: <code>cardinal</code>, <code>script</code> или "
+            "<code>script:pro</code>.",
             parse_mode="HTML",
         )
         return
-    try:
-        product = ProductKind(parts[1].strip().lower())
-    except ValueError:
-        await msg.answer("Продукт должен быть <code>cardinal</code> или <code>script</code>.", parse_mode="HTML")
+    if product == ProductKind.CARDINAL:
+        tier = "std"  # Cardinal has no PRO tier.
+    if tier not in ("std", "pro"):
+        await msg.answer("Тариф: <code>std</code> или <code>pro</code>.", parse_mode="HTML")
         return
-    days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
-    expires_in = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 30
+    if not parts[2].isdigit() or int(parts[2]) <= 0:
+        await msg.answer("hours должен быть положительным числом.")
+        return
+    hours = int(parts[2])
+    max_uses = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 1
+    valid_hours = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 30 * 24
 
     from app.repos import coupons as coupons_repo
 
     cp = await coupons_repo.create(
         session,
         product=product,
-        days=days,
+        tier=tier,
+        duration_hours=hours,
+        max_uses=max_uses,
         issued_by=user.id,
-        expires_in_days=expires_in,
+        expires_in_hours=valid_hours,
     )
     await session.commit()
+    label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
     await msg.answer(
-        f"<b>Купон создан</b>\n\n"
-        f"◾ Код: <code>{cp.code}</code>\n"
-        f"◾ Продукт: {product.value}\n"
-        f"◾ Срок: {days} дн.\n"
-        f"◾ Активен: {expires_in} дн.\n\n"
-        f"Юзер вводит этот код в /menu → Купить → «У меня купон».",
+        "<b>Купон создан</b>\n\n"
+        f" Код: <code>{cp.code}</code>\n"
+        f"• Продукт: <b>{label}</b>\n"
+        f" Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
+        f" Активаций: <b>{max_uses}</b>\n"
+        f" Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)\n\n"
+        "Юзер вводит этот код в /menu → Купить → « У меня купон».",
         parse_mode="HTML",
     )
 
@@ -492,14 +565,27 @@ async def cmd_coupons(msg: Message, session: AsyncSession, user: User) -> None:
         return
     lines = ["<b>Купоны:</b>"]
     for cp in rows[:30]:
-        used = f"used by {cp.used_by}" if cp.used_by else "free"
-        exp = "—" if not cp.expires_at else cp.expires_at.strftime("%Y-%m-%d")
-        lines.append(
-            f"  ◇ <code>{cp.code}</code> · {cp.product.value} · {cp.days}d · до {exp} · {used}"
-        )
+        lines.append(_fmt_coupon_line(cp))
     if len(rows) > 30:
         lines.append(f"\n<i>+ ещё {len(rows) - 30}</i>")
     await msg.answer("\n".join(lines), parse_mode="HTML")
+
+
+def _fmt_coupon_line(cp) -> str:
+    from app.repos import coupons as coupons_repo
+
+    tier_suffix = "PRO" if (cp.tier or "std") == "pro" else ""
+    label = f"{cp.product.value}{tier_suffix}"
+    hours = coupons_repo.duration_hours(cp)
+    span = f"{hours // 24}д" if hours % 24 == 0 else f"{hours}ч"
+    uses = f"{cp.uses_count or 0}/{cp.max_uses or 1}"
+    if cp.expires_at:
+        exp = cp.expires_at.strftime("%Y-%m-%d %H:%M")
+    else:
+        exp = "∞"
+    return (
+        f"  • <code>{cp.code}</code> · {label} · {span} · uses {uses} · до {exp}"
+    )
 
 
 @router.message(Command("del_coupon"))
@@ -553,17 +639,19 @@ async def cmd_grant_sub(msg: Message, session: AsyncSession, user: User) -> None
     from app.repos import subscriptions as subs_repo
 
     sub = await subs_repo.extend(session, uid, product, days)
+    await _ensure_placeholder_instance(session, uid, product)
     await session.commit()
     await msg.answer(
-        f"▣ Юзеру <code>{uid}</code> выдана подписка <b>{product.value}</b> до "
+        f" Юзеру <code>{uid}</code> выдана подписка <b>{product.value}</b> до "
         f"<code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code> (+{days} дн.)",
         parse_mode="HTML",
     )
     try:
         await msg.bot.send_message(
             uid,
-            f"▣ Админ выдал тебе подписку <b>{product.value}</b> на {days} дн.\n"
-            f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
+            f" Админ выдал тебе подписку <b>{product.value}</b> на {days} дн.\n"
+            f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.\n\n"
+            "Заходи в /menu → Мои серверы → Настроить.",
             parse_mode="HTML",
         )
     except Exception:  # noqa: BLE001
@@ -611,7 +699,7 @@ async def cmd_remove_days(msg: Message, session: AsyncSession, user: User) -> No
     sub = await subs_repo.extend(session, uid, product, -days)
     await session.commit()
     await msg.answer(
-        f"◾ С юзера <code>{uid}</code> снято {days} дн. {product.value}. "
+        f"• С юзера <code>{uid}</code> снято {days} дн. {product.value}. "
         f"Истекает: <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code>",
         parse_mode="HTML",
     )
@@ -647,7 +735,7 @@ async def cmd_revoke_sub(msg: Message, session: AsyncSession, user: User) -> Non
 
         sub.expires_at = now_utc()
         await session.commit()
-    await msg.answer(f"◾ Подписка {product.value} у <code>{uid}</code> отозвана.", parse_mode="HTML")
+    await msg.answer(f"• Подписка {product.value} у <code>{uid}</code> отозвана.", parse_mode="HTML")
 
 
 @router.message(Command("user_info"))
@@ -672,17 +760,17 @@ async def cmd_user_info(msg: Message, session: AsyncSession, user: User) -> None
     subs = await subs_repo.list_for_user(session, uid)
     lines = [
         f"<b>Юзер</b> <code>{target.id}</code>",
-        f"◾ Имя: {target.first_name or '—'} (@{target.username or '—'})",
-        f"◾ Админ: {target.is_admin} · Бан: {target.is_blocked}",
-        f"◾ XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
+        f"• Имя: {target.first_name or '—'} (@{target.username or '—'})",
+        f"• Админ: {target.is_admin} · Бан: {target.is_blocked}",
+        f"• XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
         "",
         "<b>Подписки:</b>",
     ]
     if subs:
         for s in subs:
-            lines.append(f"  ◆ {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}")
+            lines.append(f"  • {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}")
     else:
-        lines.append("  ◇ нет")
+        lines.append("· нет")
     await msg.answer("\n".join(lines), parse_mode="HTML")
 
 
@@ -702,7 +790,7 @@ async def cmd_admin_help(msg: Message, session: AsyncSession, user: User) -> Non
         "<code>/user_info user_id</code>\n\n"
         "<b>Купоны:</b>\n"
         "<code>/create_coupon cardinal|script [days=30] [expires_in_days=30]</code>\n"
-        "<code>/coupons</code>  ·  <code>/del_coupon CODE</code>\n\n"
+        "<code>/coupons</code> · <code>/del_coupon CODE</code>\n\n"
         "<b>Шарды:</b>\n"
         "<code>/add_shard NAME RENDER_API_KEY [capacity=4]</code>\n"
         "<code>/shards</code> · <code>/pause_shard NAME</code> · <code>/resume_shard NAME</code> · <code>/drop_shard NAME</code>\n\n"
@@ -710,9 +798,9 @@ async def cmd_admin_help(msg: Message, session: AsyncSession, user: User) -> Non
         "<code>/export_user user_id</code> — архив инстансов одного юзера\n"
         "<code>/export_all</code> — архив всех живых инстансов\n\n"
         "<b>База / админы:</b>\n"
-        "<code>/rotate_db</code>  ·  <code>/addadmin user_id</code>  ·  <code>/stats</code>\n\n"
+        "<code>/rotate_db</code> · <code>/addadmin user_id</code> · <code>/stats</code>\n\n"
         "<b>Контент:</b>\n"
-        "<code>/post_now</code>  ·  <code>/brand_channel</code>",
+        "<code>/post_now</code> · <code>/brand_channel</code>",
         parse_mode="HTML",
     )
 
@@ -786,7 +874,7 @@ async def _zip_for_user(target_user_id: int) -> bytes | None:
 @router.message(Command("export_user"))
 async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> None:
     if not _is_primary_admin(user):
-        await msg.answer("◇ Команда только для главного админа.")
+        await msg.answer("· Команда только для главного админа.")
         return
     parts = (msg.text or "").split()
     if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
@@ -795,14 +883,14 @@ async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> No
     target = int(parts[1])
     data = await _zip_for_user(target)
     if data is None:
-        await msg.answer("◇ У юзера нет инстансов или каталоги пусты.")
+        await msg.answer("· У юзера нет инстансов или каталоги пусты.")
         return
     from aiogram.types import BufferedInputFile
 
     fname = f"miihost_user{target}.zip"
     await msg.answer_document(
         BufferedInputFile(data, filename=fname),
-        caption=f"◾ Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
+        caption=f"• Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
         parse_mode="HTML",
     )
 
@@ -810,7 +898,7 @@ async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> No
 @router.message(Command("export_all"))
 async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> None:
     if not _is_primary_admin(user):
-        await msg.answer("◇ Команда только для главного админа.")
+        await msg.answer("· Команда только для главного админа.")
         return
     import io
     import zipfile
@@ -824,7 +912,7 @@ async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> Non
     )
     instances = list(res.scalars())
     if not instances:
-        await msg.answer("◇ Нет активных инстансов.")
+        await msg.answer("· Нет активных инстансов.")
         return
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -863,7 +951,7 @@ async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> Non
 
     await msg.answer_document(
         BufferedInputFile(data, filename="mihost_export_all.zip"),
-        caption=f"◾ Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
+        caption=f"• Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
         parse_mode="HTML",
     )
 
@@ -884,7 +972,7 @@ async def cb_subs_menu(cb: CallbackQuery, session: AsyncSession, user: User) -> 
         return
     if cb.message:
         await cb.message.answer(
-            "<b>◆ Подписки</b>\n\n"
+            "<b>• Подписки</b>\n\n"
             "Управление подписками юзеров. Все действия — кнопками.",
             parse_mode="HTML",
             reply_markup=admin_subs_menu(),
@@ -905,14 +993,14 @@ async def cb_sub_pick_product(
     titles = {"grant": "Выдать подписку", "add": "Добавить дни", "remove": "Снять дни"}
     if cb.message:
         await cb.message.answer(
-            f"<b>◆ {titles[action]}</b>\n\nВыбери продукт:",
+            f"<b>• {titles[action]}</b>\n\nВыбери продукт:",
             parse_mode="HTML",
             reply_markup=admin_pick_product(action),
         )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^admin:sub:(grant|add|remove):p:(cardinal|script)$"))
+@router.callback_query(F.data.regexp(r"^admin:sub:(grant|add|remove):p:(cardinal|script)(?::(std|pro))?$"))
 async def cb_sub_pick_days(
     cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
@@ -924,17 +1012,25 @@ async def cb_sub_pick_days(
     parts = cb.data.split(":")
     action = parts[2]
     product = parts[4]
-    await state.update_data(action=action, product=product)
+    tier = parts[5] if len(parts) > 5 else "std"
+    if product == ProductKind.CARDINAL.value:
+        tier = "std"
+    await state.update_data(action=action, product=product, tier=tier)
+    label = f"{product}{'PRO' if tier == 'pro' else ''}"
     if cb.message:
         await cb.message.answer(
-            f"Продукт <b>{product}</b>. Выбери количество дней:",
+            f"Продукт <b>{label}</b>. Выбери количество дней:",
             parse_mode="HTML",
-            reply_markup=admin_pick_days(action, product),
+            reply_markup=admin_pick_days(action, product, tier),
         )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^admin:sub:(grant|add|remove):d:(cardinal|script):(\d+|custom)$"))
+@router.callback_query(
+    F.data.regexp(
+        r"^admin:sub:(grant|add|remove):d:(cardinal|script):(std|pro):(\d+|custom)$"
+    )
+)
 async def cb_sub_collect_user(
     cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
@@ -946,9 +1042,12 @@ async def cb_sub_collect_user(
     parts = cb.data.split(":")
     action = parts[2]
     product = parts[4]
-    days_raw = parts[5]
+    tier = parts[5]
+    days_raw = parts[6]
+    if product == ProductKind.CARDINAL.value:
+        tier = "std"
     if days_raw == "custom":
-        await state.update_data(action=action, product=product)
+        await state.update_data(action=action, product=product, tier=tier)
         await state.set_state(AdminFSM.awaiting_sub_custom_days)
         if cb.message:
             await cb.message.answer(
@@ -961,11 +1060,12 @@ async def cb_sub_collect_user(
         days = -abs(days)
     elif action == "add" or action == "grant":
         days = abs(days)
-    await state.update_data(action=action, product=product, days=days)
+    await state.update_data(action=action, product=product, tier=tier, days=days)
     await state.set_state(AdminFSM.awaiting_sub_user_id)
+    label = f"{product}{'PRO' if tier == 'pro' else ''}"
     if cb.message:
         await cb.message.answer(
-            f"<b>{action}</b> · <b>{product}</b> · <b>{days:+d} дн</b>\n\n"
+            f"<b>{action}</b> · <b>{label}</b> · <b>{days:+d} дн</b>\n\n"
             f"Пришли user_id юзера. /cancel — отмена.",
             parse_mode="HTML",
         )
@@ -1023,12 +1123,13 @@ async def msg_sub_apply(
     data = await state.get_data()
     action = data.get("action")
     product_str = data.get("product")
+    tier = data.get("tier") or "std"
     days = int(data.get("days", 0))
     try:
         product = ProductKind(product_str)
     except (ValueError, TypeError):
         await state.clear()
-        await msg.answer("◇ Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
+        await msg.answer("· Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
         return
 
     from app.repos import subscriptions as subs_repo
@@ -1045,25 +1146,49 @@ async def msg_sub_apply(
             return
 
     sub = await subs_repo.extend(session, uid, product, days)
+    if days > 0:
+        await _ensure_placeholder_instance(session, uid, product, tier)
     await session.commit()
+    label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
     await msg.answer(
-        f"▣ Готово. Юзер <code>{uid}</code> · <b>{product.value}</b> · "
+        f"Готово. Юзер <code>{uid}</code> · <b>{label}</b> · "
         f"{days:+d} дн → активно до <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code>.",
         parse_mode="HTML",
         reply_markup=admin_back(),
     )
+    if days > 0:
+        # Notify the rest of the admins so everyone sees grants.
+        from app.db.models import User as _User
+        from app.services.admin import notify_admins
+
+        target = await session.get(_User, uid)
+        who = (target.first_name if target else str(uid)) or str(uid)
+        uname = f"@{target.username}" if (target and target.username) else ""
+        await notify_admins(
+            msg.bot,
+            "<b>Админ выдал подписку</b>\n"
+            f"Пользователь: <code>{uid}</code> {who} {uname}".strip()
+            + f"\nПродукт: <b>{label}</b>"
+            + f"\nИсточник: admin-grant"
+            + f"\nСрок: +{days} дн"
+            + f"\nДействует до: {sub.expires_at.strftime('%Y-%m-%d %H:%M')}",
+        )
     try:
         if days > 0:
             await msg.bot.send_message(
                 uid,
-                f"▣ Админ выдал тебе подписку <b>{product.value}</b>: +{days} дн.\n"
-                f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
+                "Админ выдал тебе подписку <b>"
+                f"{label}</b>: +{days} дн.\n"
+                f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.\n\n"
+                "Заходи в /menu → Мои серверы → Настроить — задай "
+                f"{'golden_key' if product == ProductKind.CARDINAL else '.zip со скриптом'} "
+                "и сервер запустится.",
                 parse_mode="HTML",
             )
         elif days < 0:
             await msg.bot.send_message(
                 uid,
-                f"◾ Админ изменил твою подписку <b>{product.value}</b>: {days} дн.\n"
+                f"• Админ изменил твою подписку <b>{product.value}</b>: {days} дн.\n"
                 f"Действует до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
                 parse_mode="HTML",
             )
@@ -1122,7 +1247,7 @@ async def msg_sub_revoke_apply(
         sub.expires_at = now_utc()
         await session.commit()
         await msg.answer(
-            f"◾ Подписка <b>{product.value}</b> у <code>{uid}</code> отозвана.",
+            f"• Подписка <b>{product.value}</b> у <code>{uid}</code> отозвана.",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1176,19 +1301,19 @@ async def msg_user_info_apply(
     subs = await subs_repo.list_for_user(session, uid)
     lines = [
         f"<b>Юзер</b> <code>{target.id}</code>",
-        f"◾ Имя: {target.first_name or '—'} (@{target.username or '—'})",
-        f"◾ Админ: {target.is_admin} · Бан: {target.is_blocked}",
-        f"◾ XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
+        f"• Имя: {target.first_name or '—'} (@{target.username or '—'})",
+        f"• Админ: {target.is_admin} · Бан: {target.is_blocked}",
+        f"• XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
         "",
         "<b>Подписки:</b>",
     ]
     if subs:
         for s in subs:
             lines.append(
-                f"  ◆ {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}"
+                f"  • {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}"
             )
     else:
-        lines.append("  ◇ нет")
+        lines.append("· нет")
     await msg.answer(
         "\n".join(lines), parse_mode="HTML", reply_markup=admin_back()
     )
@@ -1206,7 +1331,7 @@ async def cb_coupons_menu(
         return
     if cb.message:
         await cb.message.answer(
-            "<b>◆ Купоны</b>\n\n"
+            "<b>• Купоны</b>\n\n"
             "Купоны выдают подписку без оплаты. Юзер вводит код в /menu → Купить → «У меня купон».",
             parse_mode="HTML",
             reply_markup=admin_coupons_menu(),
@@ -1223,68 +1348,111 @@ async def cb_coupon_new(
         return
     if cb.message:
         await cb.message.answer(
-            "Сколько дней должен давать купон?",
-            reply_markup=admin_coupon_days(),
-        )
-    await cb.answer()
-
-
-@router.callback_query(F.data.regexp(r"^admin:coupon:days:(\d+)$"))
-async def cb_coupon_pick_product(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    if not cb.data:
-        return
-    days = int(cb.data.split(":")[3])
-    if cb.message:
-        await cb.message.answer(
-            f"<b>{days} дн</b> · выбери продукт:",
+            "<b>Новый купон</b>\n\nВыбери продукт и тариф:",
             parse_mode="HTML",
-            reply_markup=admin_coupon_pick(days),
+            reply_markup=admin_coupon_pick_product(),
         )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^admin:coupon:mk:(cardinal|script):(\d+)$"))
-async def cb_coupon_create(
-    cb: CallbackQuery, session: AsyncSession, user: User
+@router.callback_query(F.data.regexp(r"^admin:coupon:p:(cardinal|script):(std|pro)$"))
+async def cb_coupon_pick_product(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
+    """Step 2 of coupon creation: admin picked product+tier; now collect
+ duration/activations/validity as a single text line."""
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
     if not cb.data:
         return
-    _, _, _, product_raw, days_raw = cb.data.split(":")
+    _, _, _, product_raw, tier_raw = cb.data.split(":")
     try:
         product = ProductKind(product_raw)
     except ValueError:
         await cb.answer("Неверный продукт", show_alert=True)
         return
-    days = int(days_raw)
+    tier = tier_raw if product == ProductKind.SCRIPT else "std"
+    await state.update_data(coupon_product=product.value, coupon_tier=tier)
+    await state.set_state(AdminFSM.awaiting_coupon_params)
+    label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
+    if cb.message:
+        await cb.message.answer(
+            f"<b> Купон · {label}</b>\n\n"
+            "Пришли параметры одной строкой:\n"
+            "<code>&lt;hours&gt; [max_uses] [valid_hours]</code>\n\n"
+            "• <b>hours</b> — сколько часов подписки даёт одна активация\n"
+            "• <b>max_uses</b> — сколько раз можно активировать (по умолчанию 1)\n"
+            "• <b>valid_hours</b> — сколько часов сам купон будет валиден "
+            "(по умолчанию 720 = 30 дней)\n\n"
+            "Примеры:\n"
+            "• <code>72</code> — 72 часа, 1 активация\n"
+            "• <code>168 5</code> — 7 дней, 5 активаций\n"
+            "• <code>24 10 48</code> — 24 часа, 10 активаций, купон действует 48 ч\n\n"
+            "/cancel — отмена.",
+            parse_mode="HTML",
+        )
+    await cb.answer()
+
+
+@router.message(AdminFSM.awaiting_coupon_params)
+async def msg_coupon_params(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await state.clear()
+        return
+    raw = (msg.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.", reply_markup=admin_back())
+        return
+    parts = raw.split()
+    if not parts or not parts[0].isdigit() or int(parts[0]) <= 0:
+        await msg.answer(
+            "Первое число — часы подписки. Пример: <code>72</code>.\n/cancel — отмена.",
+            parse_mode="HTML",
+        )
+        return
+    hours = int(parts[0])
+    max_uses = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
+    valid_hours = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30 * 24
+    max_uses = max(1, max_uses)
+    valid_hours = max(1, valid_hours)
+
+    data = await state.get_data()
+    try:
+        product = ProductKind(data.get("coupon_product", ""))
+    except ValueError:
+        await state.clear()
+        await msg.answer("· Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
+        return
+    tier = data.get("coupon_tier") or "std"
+
     from app.repos import coupons as coupons_repo
 
     cp = await coupons_repo.create(
         session,
         product=product,
-        days=days,
+        tier=tier,
+        duration_hours=hours,
+        max_uses=max_uses,
         issued_by=user.id,
-        expires_in_days=30,
+        expires_in_hours=valid_hours,
     )
     await session.commit()
-    if cb.message:
-        await cb.message.answer(
-            f"<b>▣ Купон создан</b>\n\n"
-            f"◾ Код: <code>{cp.code}</code>\n"
-            f"◾ Продукт: <b>{product.value}</b>\n"
-            f"◾ Срок действия купона: 30 дн.\n"
-            f"◾ Даёт подписку: <b>{days} дн</b>",
-            parse_mode="HTML",
-            reply_markup=admin_back(),
-        )
-    await cb.answer("Купон создан")
+    label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
+    await msg.answer(
+        "<b>Купон создан</b>\n\n"
+        f" Код: <code>{cp.code}</code>\n"
+        f"• Продукт: <b>{label}</b>\n"
+        f" Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
+        f" Активаций: <b>{max_uses}</b>\n"
+        f" Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)",
+        parse_mode="HTML",
+        reply_markup=admin_back(),
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data == "admin:coupon:list")
@@ -1306,11 +1474,7 @@ async def cb_coupon_list(
         return
     lines = ["<b>Купоны:</b>"]
     for cp in rows[:30]:
-        used = f"used by {cp.used_by}" if cp.used_by else "free"
-        exp = "—" if not cp.expires_at else cp.expires_at.strftime("%Y-%m-%d")
-        lines.append(
-            f"  ◇ <code>{cp.code}</code> · {cp.product.value} · {cp.days}d · до {exp} · {used}"
-        )
+        lines.append(_fmt_coupon_line(cp))
     if len(rows) > 30:
         lines.append(f"\n<i>+ ещё {len(rows) - 30}</i>")
     if cb.message:
@@ -1370,10 +1534,55 @@ async def cb_shards_menu(
         return
     if cb.message:
         await cb.message.answer(
-            "<b>◆ Шарды</b>\n\nShard = отдельный Render-аккаунт, на котором крутятся "
+            "<b>• Шарды</b>\n\nShard = отдельный Render-аккаунт, на котором крутятся "
             "тенанты. Для добавления нужен Render API key с GitHub-OAuth-аккаунта.",
             parse_mode="HTML",
             reply_markup=admin_shards_menu(),
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:shard:purge_dead")
+async def cb_shard_purge_dead(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    from sqlalchemy import update as sa_update
+
+    from app.db.models import Instance, InstanceStatus, Shard
+    from app.repos import shards as shards_repo
+
+    rows = await shards_repo.all_(session)
+    dead_ids: list[int] = []
+    for sh in rows:
+        if not shards_repo.is_alive(sh):
+            dead_ids.append(sh.id)
+    if not dead_ids:
+        await cb.answer("Мёртвых шардов нет.", show_alert=True)
+        return
+    # Move any non-deleted instance off these shards back to master.
+    await session.execute(
+        sa_update(Instance)
+        .where(Instance.shard_id.in_(dead_ids))
+        .where(Instance.status != InstanceStatus.DELETED)
+        .values(shard_id=None, actual_state="stopped")
+    )
+    # Detach DELETED rows too so the shard row itself can be removed
+    # without violating any FK if one is added later.
+    await session.execute(
+        sa_update(Instance)
+        .where(Instance.shard_id.in_(dead_ids))
+        .values(shard_id=None)
+    )
+    for sid in dead_ids:
+        await shards_repo.delete(session, sid)
+    await session.commit()
+    if cb.message:
+        await cb.message.answer(
+            f"Снёс {len(dead_ids)} мёртвых шардов. "
+            f"Их инстансы вернул на мастер.",
         )
     await cb.answer()
 
@@ -1407,7 +1616,7 @@ async def cb_shard_list(
             else "—"
         )
         alive = shards_repo2.is_alive(sh)
-        marker = "●" if alive else "○"
+        marker = "" if alive else ""
         lines.append(
             f"  {marker} <b>{sh.name}</b> · {load}/{sh.capacity} · "
             f"{sh.status.value} · last_seen={last}"
@@ -1465,20 +1674,20 @@ async def msg_shard_add_apply(
         owner_id = await rc.autodetect_owner()
     except Exception as exc:  # noqa: BLE001
         await msg.answer(
-            f"❌ API key недействителен: <code>{exc}</code>",
+            f" API key недействителен: <code>{exc}</code>",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
         await state.clear()
         return
     if not owner_id:
-        await msg.answer("❌ Не нашёл owner у этого API key.", reply_markup=admin_back())
+        await msg.answer("Не нашёл owner у этого API key.", reply_markup=admin_back())
         await state.clear()
         return
     existing = await shards_repo.by_name(session, name)
     if existing:
         await msg.answer(
-            f"❌ Шард <b>{name}</b> уже есть.",
+            f" Шард <b>{name}</b> уже есть.",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1490,7 +1699,7 @@ async def msg_shard_add_apply(
     )
     await session.commit()
     await msg.answer(
-        f"▣ Шард <b>{name}</b> зарегистрирован (id={shard.id}). Деплою воркер…",
+        f" Шард <b>{name}</b> зарегистрирован (id={shard.id}). Деплою воркер…",
         parse_mode="HTML",
     )
     try:
@@ -1502,14 +1711,14 @@ async def msg_shard_add_apply(
     await session.commit()
     if result.get("ok"):
         await msg.answer(
-            f"▣ Воркер деплоится: <code>{result.get('service_id')}</code>\n"
+            f" Воркер деплоится: <code>{result.get('service_id')}</code>\n"
             f"URL: {result.get('service_url')}",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
     else:
         await msg.answer(
-            f"⚠️ Не получилось задеплоить: <code>{result.get('reason')}</code>",
+            f" Не получилось задеплоить: <code>{result.get('reason')}</code>",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1558,7 +1767,7 @@ async def msg_shard_toggle_apply(
     await shards_repo.set_status(session, sh.id, new_status)
     await session.commit()
     await msg.answer(
-        f"▣ <b>{name}</b> теперь: <b>{new_status.value}</b>",
+        f" <b>{name}</b> теперь: <b>{new_status.value}</b>",
         parse_mode="HTML",
         reply_markup=admin_back(),
     )
@@ -1575,7 +1784,7 @@ async def cb_shard_drop_start(
     await state.set_state(AdminFSM.awaiting_shard_drop)
     if cb.message:
         await cb.message.answer(
-            "Пришли имя шарда для удаления. ⚠️ Render-сервис тоже будет удалён, "
+            "Пришли имя шарда для удаления. Render-сервис тоже будет удалён, "
             "тенанты на нём — переброшены при следующем reconcile. /cancel — отмена."
         )
     await cb.answer()
@@ -1609,13 +1818,13 @@ async def msg_shard_drop_apply(
                 await rc.delete_service(sh.service_id)
         except Exception as exc:  # noqa: BLE001
             await msg.answer(
-                f"⚠ Render service удаление: <code>{exc}</code>",
+                f" Render service удаление: <code>{exc}</code>",
                 parse_mode="HTML",
             )
     await shards_repo.delete(session, sh.id)
     await session.commit()
     await msg.answer(
-        f"▣ Шард <b>{name}</b> удалён.",
+        f" Шард <b>{name}</b> удалён.",
         parse_mode="HTML",
         reply_markup=admin_back(),
     )
@@ -1633,7 +1842,7 @@ async def cb_export_menu(
         return
     if cb.message:
         await cb.message.answer(
-            "<b>◆ Экспорт данных</b>\n\n"
+            "<b>• Экспорт данных</b>\n\n"
             "Скачать конфиги тенантов одним архивом. Доступно только главному админу.",
             parse_mode="HTML",
             reply_markup=admin_export_menu(),
@@ -1675,7 +1884,7 @@ async def msg_export_user_apply(
     data = await _zip_for_user(target)
     if data is None:
         await msg.answer(
-            "◇ У юзера нет инстансов или каталоги пусты.",
+            "· У юзера нет инстансов или каталоги пусты.",
             reply_markup=admin_back(),
         )
         await state.clear()
@@ -1685,7 +1894,7 @@ async def msg_export_user_apply(
     fname = f"miihost_user{target}.zip"
     await msg.answer_document(
         BufferedInputFile(data, filename=fname),
-        caption=f"◾ Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
+        caption=f"• Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
         parse_mode="HTML",
     )
     await state.clear()
@@ -1700,7 +1909,7 @@ async def cb_export_all_btn(
         return
     # Re-use the existing /export_all command body; easiest is to fake a Message.
     if cb.message:
-        await cb.message.answer("⏳ Готовлю экспорт всех инстансов…")
+        await cb.message.answer("Готовлю экспорт всех инстансов…")
         # Adapt cmd_export_all by passing the callback message + acting like /export_all
         cb.message.from_user = cb.from_user  # type: ignore[attr-defined]
         # We can't safely call cmd_export_all directly because it pulls msg.text
@@ -1718,7 +1927,7 @@ async def cb_export_all_btn(
         instances = list(res.scalars())
         if not instances:
             await cb.message.answer(
-                "◇ Нет активных инстансов.", reply_markup=admin_back()
+                "· Нет активных инстансов.", reply_markup=admin_back()
             )
             await cb.answer()
             return
@@ -1759,7 +1968,296 @@ async def cb_export_all_btn(
 
         await cb.message.answer_document(
             BufferedInputFile(data, filename="mihost_export_all.zip"),
-            caption=f"◾ Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
+            caption=f"• Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
             parse_mode="HTML",
         )
     await cb.answer()
+
+
+# ──────────────────────────── Admin: hostings ───────────────────────────────
+#
+# Global view over every user's instance with start/stop/restart/logs/drop +
+# "view config" actions that reuse the functions already used by the user
+# side. Paginated, 6 rows per page.
+
+_HOSTINGS_PAGE = 6
+
+
+def _hostings_status_icon(status_value: str) -> str:
+    return {
+        "live": "🟢",
+        "deploying": "🟡",
+        "pending": "🟡",
+        "suspended": "🟡",
+        "failed": "🔴",
+        "deleted": "🔴",
+    }.get(status_value, "🟡")
+
+
+async def _render_hostings_page(session: AsyncSession, page: int) -> tuple[str, InlineKeyboardMarkup]:
+    from app.db.models import Instance, InstanceStatus as _St
+    from sqlalchemy import select as _select
+
+    q = _select(Instance).where(Instance.status != _St.DELETED).order_by(Instance.id.desc())
+    res = await session.execute(q)
+    all_inst = list(res.scalars())
+    total = len(all_inst)
+    pages = max(1, (total + _HOSTINGS_PAGE - 1) // _HOSTINGS_PAGE)
+    page = max(0, min(page, pages - 1))
+    chunk = all_inst[page * _HOSTINGS_PAGE:(page + 1) * _HOSTINGS_PAGE]
+
+    lines = [f"<b>Хостинги пользователей</b> · {total} · стр. {page + 1}/{pages}"]
+    rows: list[list[InlineKeyboardButton]] = []
+    for inst in chunk:
+        tier = ((inst.config or {}).get("tier") or "std").lower()
+        tier_suf = " PRO" if tier == "pro" else ""
+        ico = _hostings_status_icon(inst.status.value)
+        lines.append(
+            f"\n{ico} #{inst.id} · uid <code>{inst.user_id}</code> · "
+            f"{inst.product.value}{tier_suf} · {inst.status.value}"
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{ico} #{inst.id} · uid {inst.user_id} · {inst.product.value}{tier_suf}",
+                    callback_data=f"admin:host:open:{inst.id}",
+                )
+            ]
+        )
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="« назад", callback_data=f"admin:hostings:{page - 1}"))
+    if page + 1 < pages:
+        nav.append(InlineKeyboardButton(text="вперёд »", callback_data=f"admin:hostings:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="В админку", callback_data="admin")])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("admin:hostings:"))
+async def cb_admin_hostings(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    try:
+        page = int((cb.data or "admin:hostings:0").split(":")[2])
+    except ValueError:
+        page = 0
+    text, kb = await _render_hostings_page(session, page)
+    if cb.message:
+        try:
+            await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await cb.answer()
+
+
+def _host_actions_kb(inst_id: int, product_value: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="Старт", callback_data=f"admin:host:start:{inst_id}"),
+            InlineKeyboardButton(text="Стоп", callback_data=f"admin:host:stop:{inst_id}"),
+            InlineKeyboardButton(text="Рестарт", callback_data=f"admin:host:restart:{inst_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="Логи", callback_data=f"admin:host:logs:{inst_id}"),
+            InlineKeyboardButton(text="Статус", callback_data=f"admin:host:status:{inst_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="Удалить", callback_data=f"admin:host:drop:{inst_id}"),
+        ],
+        [InlineKeyboardButton(text="К списку", callback_data="admin:hostings:0")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("admin:host:open:"))
+async def cb_admin_host_open(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    from app.repos import instances as inst_repo
+    from app.services.supervisor import supervisor
+
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    s = supervisor.status(inst.id) or {}
+    tier = ((inst.config or {}).get("tier") or "std").lower()
+    tier_suf = " PRO" if tier == "pro" else ""
+    cfg_summary = []
+    if inst.product == ProductKind.CARDINAL:
+        gk = (inst.config or {}).get("golden_key") or ""
+        tok = (inst.config or {}).get("tg_token") or ""
+        cfg_summary.append(f"golden_key: {'*'*6 + gk[-4:] if gk else '(пусто)'}")
+        cfg_summary.append(f"tg_token: {tok[:10] + '…' if tok else '(пусто)'}")
+    else:
+        ep = (inst.config or {}).get("entrypoint") or "?"
+        cfg_summary.append(f"entrypoint: {ep}")
+    text = (
+        f"<b>Инстанс #{inst.id}</b>\n"
+        f"Пользователь: <code>{inst.user_id}</code>\n"
+        f"Продукт: {inst.product.value}{tier_suf}\n"
+        f"Статус: {_hostings_status_icon(inst.status.value)} {inst.status.value}\n"
+        f"Процесс: {'жив' if s.get('alive') else 'нет'} · PID {s.get('pid') or '—'} · "
+        f"uptime {s.get('uptime', 0)} с · restart {s.get('restart_count', 0)}\n"
+        + "\n".join(cfg_summary)
+    )
+    if cb.message:
+        try:
+            await cb.message.edit_text(
+                text, parse_mode="HTML", reply_markup=_host_actions_kb(inst.id, inst.product.value)
+            )
+        except Exception:
+            await cb.message.answer(
+                text, parse_mode="HTML", reply_markup=_host_actions_kb(inst.id, inst.product.value)
+            )
+    await cb.answer()
+
+
+async def _host_act(
+    cb: CallbackQuery, session: AsyncSession, user: User, verb: str
+) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    from app.db.models import InstanceStatus as _St
+    from app.repos import instances as inst_repo
+    from app.services.supervisor import supervisor
+
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+
+    if verb == "start":
+        # Re-create the tenant from stored config if needed.
+        cfg = inst.config or {}
+        if inst.product == ProductKind.CARDINAL and cfg.get("golden_key"):
+            try:
+                from app.services.cardinal import start_tenant
+
+                await start_tenant(
+                    inst.id,
+                    golden_key=cfg.get("golden_key", ""),
+                    telegram_token=cfg.get("tg_token", ""),
+                    secret_key_hash=cfg.get("tg_secret_hash", ""),
+                )
+                inst.status = _St.LIVE
+                inst.actual_state = "live"
+            except Exception:
+                logger.exception("admin start cardinal failed")
+                inst.status = _St.FAILED
+        else:
+            # Script: reuse cached spec via restart (supervisor.start requires a TenantSpec).
+            try:
+                await supervisor.restart(inst.id)
+                inst.status = _St.LIVE
+                inst.actual_state = "live"
+            except Exception:
+                logger.exception("admin start script failed")
+                inst.status = _St.FAILED
+        msg = "Стартую."
+    elif verb == "stop":
+        try:
+            await supervisor.stop(inst.id)
+        except Exception:
+            logger.exception("admin stop failed")
+        inst.status = _St.SUSPENDED
+        inst.actual_state = "stopped"
+        msg = "Остановил."
+    elif verb == "restart":
+        try:
+            await supervisor.restart(inst.id)
+            inst.status = _St.LIVE
+            inst.actual_state = "live"
+        except Exception:
+            logger.exception("admin restart failed")
+        msg = "Перезапускаю."
+    elif verb == "drop":
+        try:
+            await supervisor.remove(inst.id)
+        except Exception:
+            logger.exception("drop: supervisor.remove failed")
+        freed = 0
+        if inst.product == ProductKind.CARDINAL:
+            try:
+                from app.services.cardinal import remove_tenant_dir
+
+                freed = remove_tenant_dir(inst.id) or 0
+            except Exception:
+                logger.exception("drop cardinal dir failed")
+        else:
+            try:
+                from app.services.script_host import remove as remove_script
+
+                freed = remove_script(inst.id) or 0
+            except Exception:
+                logger.exception("drop script dir failed")
+        inst.status = _St.DELETED
+        inst.desired_state = "stopped"
+        inst.actual_state = "deleted"
+        msg = f"Удалил. Освобождено {freed // 1024} KB."
+    else:
+        msg = "?"
+    await session.commit()
+    await cb.answer(msg)
+    # Refresh the admin view.
+    fake_data = f"admin:host:open:{inst.id}"
+    cb.model_config if False else None  # no-op
+    cb.__dict__["data"] = fake_data
+    await cb_admin_host_open(cb, session, user)
+
+
+@router.callback_query(F.data.startswith("admin:host:start:"))
+async def _h_start(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "start")
+
+
+@router.callback_query(F.data.startswith("admin:host:stop:"))
+async def _h_stop(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "stop")
+
+
+@router.callback_query(F.data.startswith("admin:host:restart:"))
+async def _h_restart(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "restart")
+
+
+@router.callback_query(F.data.startswith("admin:host:drop:"))
+async def _h_drop(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    await _host_act(cb, session, user, "drop")
+
+
+@router.callback_query(F.data.startswith("admin:host:logs:"))
+async def _h_logs(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await is_admin(session, user.id):
+        await cb.answer("Только для админов", show_alert=True)
+        return
+    from app.services.supervisor import supervisor
+
+    inst_id = int((cb.data or "").rsplit(":", 1)[-1])
+    raw = supervisor.tail(inst_id, lines=40)
+    logs = "\n".join(raw) if raw else "(пусто)"
+    if cb.message:
+        await cb.message.answer(
+            f"<b>Логи #{inst_id}</b>\n<pre>{logs[-3500:]}</pre>",
+            parse_mode="HTML",
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:host:status:"))
+async def _h_status(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    # Reuse the same open view (contains all status fields).
+    inst_id = (cb.data or "").rsplit(":", 1)[-1]
+    cb.__dict__["data"] = f"admin:host:open:{inst_id}"
+    await cb_admin_host_open(cb, session, user)

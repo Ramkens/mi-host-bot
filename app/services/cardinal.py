@@ -82,19 +82,46 @@ def _write_main_cfg(
     *,
     golden_key: str,
     user_agent: str = "",
+    telegram_token: str = "",
+    secret_key_hash: Optional[str] = None,
+    proxy: str = "",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> None:
     """(Re)write ``configs/_main.cfg`` from the default + user overrides."""
     cfg_dir = tenant_dir / "configs"
     cfg_dir.mkdir(exist_ok=True)
-    base = default_main_cfg(golden_key=golden_key, user_agent=user_agent)
+    kwargs: dict[str, Any] = {
+        "golden_key": golden_key,
+        "user_agent": user_agent,
+        "telegram_token": telegram_token,
+        "telegram_enabled": bool(telegram_token),
+        "proxy": proxy,
+    }
+    if secret_key_hash:
+        kwargs["secret_key_hash"] = secret_key_hash
+    base = default_main_cfg(**kwargs)
     sections = merge_overrides(base, overrides)
-    # Make sure golden_key/user_agent in [FunPay] always reflect the
-    # latest values, even if the user-supplied override forgot them.
+    # Ensure live values survive user-supplied overrides that may have
+    # forgotten them.
     sections.setdefault("FunPay", {})["golden_key"] = golden_key
     if user_agent:
         sections["FunPay"]["user_agent"] = user_agent
+    if telegram_token:
+        sections.setdefault("Telegram", {})
+        sections["Telegram"]["token"] = telegram_token
+        sections["Telegram"]["enabled"] = "1"
+        if secret_key_hash:
+            sections["Telegram"]["secretKeyHash"] = secret_key_hash
+    if proxy:
+        sections.setdefault("Proxy", {})
+        sections["Proxy"]["proxy"] = proxy
+        sections["Proxy"]["enable"] = "1"
     (cfg_dir / "_main.cfg").write_text(render_main_cfg(sections), encoding="utf-8")
+    logger.info(
+        "_write_main_cfg: tenant=%s gk_len=%d tok_len=%d hash_set=%s proxy_set=%s",
+        tenant_dir.name, len(golden_key or ""), len(telegram_token or ""),
+        bool(secret_key_hash), bool(proxy),
+    )
     # Cardinal also expects two empty optional configs; create if missing.
     for fname in ("auto_response.cfg", "auto_delivery.cfg"):
         p = cfg_dir / fname
@@ -107,6 +134,9 @@ async def provision_tenant(
     *,
     golden_key: str,
     user_agent: Optional[str] = None,
+    telegram_token: str = "",
+    secret_key_hash: Optional[str] = None,
+    proxy: str = "",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> Path:
     cache = await ensure_cardinal_cache()
@@ -126,6 +156,9 @@ async def provision_tenant(
         tenant_dir,
         golden_key=golden_key,
         user_agent=user_agent or "",
+        telegram_token=telegram_token,
+        secret_key_hash=secret_key_hash,
+        proxy=proxy,
         overrides=overrides,
     )
     # Mi Host shim that re-applies env-driven golden_key on every restart.
@@ -137,46 +170,56 @@ async def provision_tenant(
 # Shim runs inside the tenant process. It re-injects ``GOLDEN_KEY`` into
 # ``configs/_main.cfg`` (preserving every other section the user may have
 # customized) and then hands control to Cardinal's ``main.py``.
-_SHIM_PY = """\
-'''Mi Host bootstrap for Cardinal: refresh golden_key from env, then run.'''
-import codecs, os, runpy, sys
-from configparser import ConfigParser
-from pathlib import Path
-
-cfg_path = Path(__file__).parent / 'configs' / '_main.cfg'
-key = os.environ.get('GOLDEN_KEY', '')
-ua = os.environ.get('USER_AGENT', '')
-if cfg_path.exists() and key:
-    cp = ConfigParser(delimiters=(':',), interpolation=None)
-    cp.optionxform = str
-    cp.read_file(codecs.open(str(cfg_path), 'r', 'utf8'))
-    if not cp.has_section('FunPay'):
-        cp.add_section('FunPay')
-    cp.set('FunPay', 'golden_key', key)
-    if ua:
-        cp.set('FunPay', 'user_agent', ua)
-    with cfg_path.open('w', encoding='utf-8') as f:
-        cp.write(f, space_around_delimiters=True)
-
-sys.argv = ['main.py']
-try:
-    runpy.run_path('main.py', run_name='__main__')
-except SystemExit:
-    raise
-except Exception as exc:
-    print(f'[mihost] cardinal crashed: {exc!r}')
-    raise
-"""
+_SHIM_PY = (
+    "'''Mi Host bootstrap for Cardinal: refresh golden_key from env, then run.'''\n"
+    "import codecs, os, runpy, sys\n"
+    "from configparser import ConfigParser\n"
+    "from pathlib import Path\n"
+    "\n"
+    "cfg_path = Path(__file__).parent / 'configs' / '_main.cfg'\n"
+    "key = os.environ.get('GOLDEN_KEY', '')\n"
+    "ua = os.environ.get('USER_AGENT', '')\n"
+    "if cfg_path.exists() and key:\n"
+    "    cp = ConfigParser(delimiters=(':',), interpolation=None)\n"
+    "    cp.optionxform = str\n"
+    "    cp.read_file(codecs.open(str(cfg_path), 'r', 'utf8'))\n"
+    "    if not cp.has_section('FunPay'):\n"
+    "        cp.add_section('FunPay')\n"
+    "    cp.set('FunPay', 'golden_key', key)\n"
+    "    if ua:\n"
+    "        cp.set('FunPay', 'user_agent', ua)\n"
+    "    with cfg_path.open('w', encoding='utf-8') as f:\n"
+    "        cp.write(f, space_around_delimiters=True)\n"
+    "\n"
+    "main_path = str(Path(__file__).parent / 'main.py')\n"
+    "sys.argv = [main_path]\n"
+    "os.chdir(str(Path(__file__).parent))\n"
+    "try:\n"
+    "    runpy.run_path(main_path, run_name='__main__')\n"
+    "except SystemExit:\n"
+    "    raise\n"
+    "except Exception as exc:\n"
+    "    print(f'[mihost] cardinal crashed: {exc!r}')\n"
+    "    raise\n"
+)
 
 
 async def start_tenant(
     instance_id: int,
     *,
     golden_key: str,
+    telegram_token: str = "",
+    secret_key_hash: Optional[str] = None,
+    proxy: str = "",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> dict[str, Any]:
     tenant_dir = await provision_tenant(
-        instance_id, golden_key=golden_key, overrides=overrides
+        instance_id,
+        golden_key=golden_key,
+        telegram_token=telegram_token,
+        secret_key_hash=secret_key_hash,
+        proxy=proxy,
+        overrides=overrides,
     )
     spec = TenantSpec(
         instance_id=instance_id,
@@ -221,11 +264,11 @@ def read_main_cfg(instance_id: int) -> dict[str, dict[str, str]]:
 async def write_user_main_cfg(instance_id: int, raw: str) -> tuple[bool, str]:
     """Replace the tenant's ``_main.cfg`` with raw user-uploaded content.
 
-    Returns (ok, message). Validates by parsing through ConfigParser; we
-    don't run Cardinal's full ``load_main_config`` because that requires
-    bcrypt-hashed secretKeyHash and other fields the user may legitimately
-    want to defer.
-    """
+ Returns (ok, message). Validates by parsing through ConfigParser; we
+ don't run Cardinal's full ``load_main_config`` because that requires
+ bcrypt-hashed secretKeyHash and other fields the user may legitimately
+ want to defer.
+ """
     import codecs
     import io
     from configparser import ConfigParser, Error as ConfigParserError
@@ -255,10 +298,31 @@ async def write_user_main_cfg(instance_id: int, raw: str) -> tuple[bool, str]:
     return True, f"_main.cfg updated ({len(cp2.sections())} sections)."
 
 
-def remove_tenant_dir(instance_id: int) -> None:
-    """Wipe the tenant's working directory (used on purge / unsubscribe)."""
+def remove_tenant_dir(instance_id: int) -> int:
+    """Wipe the tenant's working directory and return the number of bytes freed.
+
+    Errors during rmtree are logged (not silently swallowed) so a stuck
+    file descriptor or permission problem actually surfaces in our logs.
+    """
     tenant_dir = _tenant_dir(instance_id)
-    shutil.rmtree(tenant_dir, ignore_errors=True)
+    if not tenant_dir.exists():
+        return 0
+    freed = 0
+    try:
+        for p in tenant_dir.rglob("*"):
+            try:
+                if p.is_file() or p.is_symlink():
+                    freed += p.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+    def _onerr(func, path, exc_info):
+        logger.warning("remove_tenant_dir: %s on %s: %s", func.__name__, path, exc_info[1])
+
+    shutil.rmtree(tenant_dir, onerror=_onerr)
+    return freed
 
 
 async def write_user_aux_cfg(
