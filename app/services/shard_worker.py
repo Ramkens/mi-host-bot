@@ -54,11 +54,18 @@ async def _resolve_shard() -> Optional[Shard]:
 async def _start_instance(inst: Instance) -> None:
     """Spawn the subprocess for an instance whose desired_state=live."""
     if inst.product == ProductKind.CARDINAL:
-        gk = (inst.config or {}).get("golden_key")
+        cfg = inst.config or {}
+        gk = cfg.get("golden_key")
         if not gk:
             logger.warning("instance %s: no golden_key, skipping", inst.id)
             return
-        await start_tenant(inst.id, golden_key=gk)
+        await start_tenant(
+            inst.id,
+            golden_key=gk,
+            telegram_token=cfg.get("tg_token", "") or "",
+            secret_key_hash=cfg.get("tg_secret_hash") or None,
+            proxy=cfg.get("proxy", "") or "",
+        )
     else:
         td = tenant_dir(inst.id)
         if not td.exists():

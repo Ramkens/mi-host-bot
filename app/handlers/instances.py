@@ -170,11 +170,18 @@ async def cb_inst_start(
     if inst.product == ProductKind.CARDINAL:
         from app.services.cardinal import start_tenant
 
-        gk = inst.config.get("golden_key")
+        cfg = inst.config or {}
+        gk = cfg.get("golden_key")
         if not gk:
             await cb.answer("Сначала задайте golden_key", show_alert=True)
             return
-        await start_tenant(inst.id, golden_key=gk)
+        await start_tenant(
+            inst.id,
+            golden_key=gk,
+            telegram_token=cfg.get("tg_token", "") or "",
+            secret_key_hash=cfg.get("tg_secret_hash") or None,
+            proxy=cfg.get("proxy", "") or "",
+        )
     else:
         # script: spawn from existing tenant dir if exists
         from app.services.script_host import tenant_dir
