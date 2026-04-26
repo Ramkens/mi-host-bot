@@ -150,9 +150,8 @@ async def receive_golden_key(
     await msg.answer(
         "<b>Шаг 2/4 · Telegram-бот Cardinal</b>\n\n"
         "Пришли токен своего Telegram-бота (<code>@BotFather</code> → "
-        "<code>/newbot</code>) одним сообщением — Cardinal будет слать через "
-        "него уведомления и принимать команды.\n\n"
-        "Если пока не нужен — отправь <code>-</code> (пропустить).",
+        "<code>/newbot</code>) одним сообщением — через него Cardinal будет "
+        "слать уведомления и принимать команды. <b>Обязательный шаг.</b>",
         parse_mode="HTML",
     )
 
@@ -164,26 +163,11 @@ async def receive_tg_token(
     from app.services.cardinal_config import validate_tg_token
 
     raw = (msg.text or "").strip()
-    if raw == "-" or raw == "":
-        await state.update_data(tg_token="", tg_pw_hash="")
-        try:
-            await msg.delete()
-        except Exception:  # noqa: BLE001
-            pass
-        await state.set_state(BuyFSM.awaiting_proxy)
-        await msg.answer(
-            "<b>Шаг 4/4 · IPv4-прокси (опционально)</b>\n\n"
-            "Если хочешь гонять FunPay через прокси — пришли его в формате "
-            "<code>scheme://login:pass@ip:port</code>, <code>login:pass@ip:port</code> "
-            "или просто <code>ip:port</code>.\n\n"
-            "Если не нужен — отправь <code>-</code>.",
-            parse_mode="HTML",
-        )
-        return
     if not validate_tg_token(raw):
         await msg.answer(
             "❌ Токен не похож на настоящий. Формат: <code>123456:ABC-DEF...</code>.\n"
-            "Или отправь <code>-</code> чтобы пропустить.",
+            "Без Telegram-бота Cardinal запустить нельзя — создай бота у "
+            "<code>@BotFather</code> (<code>/newbot</code>) и пришли токен.",
             parse_mode="HTML",
         )
         return
@@ -196,7 +180,7 @@ async def receive_tg_token(
     await msg.answer(
         "<b>Шаг 3/4 · Пароль Cardinal</b>\n\n"
         "Придумай пароль для входа в Telegram-бота Cardinal "
-        "(спросит при первом <code>/start</code>).\n\n"
+        "(спросит при первом <code>/start</code>). <b>Обязательный шаг.</b>\n\n"
         "Требования: минимум 8 символов, заглавные + строчные буквы, "
         "хотя бы одна цифра. Например: <code>CatShop2025</code>.",
         parse_mode="HTML",

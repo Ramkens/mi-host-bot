@@ -310,9 +310,7 @@ async def setup_receive_key(
     await state.set_state(SetupFSM.awaiting_tg_token)
     await msg.answer(
         "<b>Шаг 2/4 · Telegram-бот Cardinal</b>\n\n"
-        "Пришли токен Telegram-бота (@BotFather → /newbot) — Cardinal будет "
-        "слать через него уведомления и принимать команды.\n\n"
-        "Если не нужен — отправь <code>-</code>.",
+        "Пришли токен Telegram-бота (@BotFather → /newbot). <b>Обязательный шаг.</b>",
         parse_mode="HTML",
     )
 
@@ -328,20 +326,11 @@ async def setup_receive_tg_token(
         await state.clear()
         await msg.answer("Отменено.")
         return
-    if raw == "-" or raw == "":
-        await state.update_data(setup_tg_token="", setup_tg_pw_hash="")
-        await state.set_state(SetupFSM.awaiting_proxy)
-        await msg.answer(
-            "<b>Шаг 4/4 · IPv4-прокси</b>\n\n"
-            "<code>scheme://login:pass@ip:port</code>, "
-            "<code>login:pass@ip:port</code> или <code>ip:port</code>.\n"
-            "Не нужно — <code>-</code>.",
-            parse_mode="HTML",
-        )
-        return
     if not validate_tg_token(raw):
         await msg.answer(
-            "❌ Токен не похож на настоящий. Формат: <code>123456:ABC-DEF...</code>.",
+            "❌ Токен не похож на настоящий. Формат: <code>123456:ABC-DEF...</code>.\n"
+            "Создай бота у <code>@BotFather</code> (<code>/newbot</code>) — "
+            "без него Cardinal не запустится.",
             parse_mode="HTML",
         )
         return
@@ -353,7 +342,7 @@ async def setup_receive_tg_token(
     await state.set_state(SetupFSM.awaiting_tg_password)
     await msg.answer(
         "<b>Шаг 3/4 · Пароль Cardinal</b>\n\n"
-        "Придумай пароль для входа в Telegram-бота Cardinal. "
+        "Придумай пароль для входа в Telegram-бота Cardinal. <b>Обязательный шаг.</b>\n"
         "≥8 символов, заглавные + строчные буквы, минимум одна цифра.",
         parse_mode="HTML",
     )
