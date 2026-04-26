@@ -35,7 +35,7 @@ def _status_icon(st: InstanceStatus) -> str:
         InstanceStatus.PENDING: "⚪",
         InstanceStatus.SUSPENDED: "🟠",
         InstanceStatus.FAILED: "🔴",
-        InstanceStatus.DELETED: "⚫",
+        InstanceStatus.DELETED: "🖤",
     }.get(st, "⚪")
 
 
@@ -47,7 +47,7 @@ async def cb_instances(
     if not items:
         text = (
             "<b>🖥️ Мои серверы</b>\n\n"
-            "Серверов пока нет. Купи подписку через /menu → ⚫ Купить "
+            "Серверов пока нет. Купи подписку через /menu → 🖤 Купить "
             "или активируй купон через /coupon."
         )
         if cb.message:
@@ -265,7 +265,7 @@ async def cb_inst_setup(
         await state.set_state(SetupFSM.awaiting_golden_key)
         if cb.message:
             await cb.message.answer(
-                "<b>■ Cardinal · 1/2</b>\n\n"
+                "<b>🖤 Cardinal · 1/2</b>\n\n"
                 "Пришли <code>golden_key</code> (32 символа).\n"
                 "<i>funpay.com → DevTools → Application → Cookies</i>\n\n"
                 "/cancel — отмена",
@@ -304,7 +304,7 @@ async def setup_receive_key(
         pass
     await state.set_state(SetupFSM.awaiting_tg_token)
     await msg.answer(
-        "<b>■ Cardinal · 2/2</b>\n\n"
+        "<b>🖤 Cardinal · 2/2</b>\n\n"
         "Пришли токен Telegram-бота (<code>@BotFather → /newbot</code>).\n"
         "Через него ты будешь управлять Cardinal.",
         parse_mode="HTML",

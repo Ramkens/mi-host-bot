@@ -97,6 +97,34 @@ async def _restore_tenants() -> None:
             logger.warning("restore tenant %s: %s", inst.id, exc)
 
 
+async def _ensure_keepalive_cron() -> None:
+    """Re-apply the cron-job.org keep-alive config on every boot.
+
+    The contract we enforce: one GET job against ``/healthz``, enabled, firing
+    every minute, with failure notifications OFF so a cold-start 5xx doesn't
+    auto-disable the pinger. Idempotent — if mi-host-bot reboots a thousand
+    times the job just stays correctly configured.
+    """
+    from app.services.cron import CronJobClient, CronJobError
+
+    client = CronJobClient()
+    if not client.enabled:
+        logger.info("cron-job.org API key not set; skipping keep-alive bootstrap")
+        return
+    target = settings.public_url.rstrip("/") if settings.public_url else ""
+    if not target or "localhost" in target:
+        logger.info("public_url not usable; skipping keep-alive bootstrap")
+        return
+    url = f"{target}/healthz"
+    try:
+        job_id = await client.ensure_keepalive(
+            title="Mi Host keep-alive (1m)", url=url, every_minutes=1
+        )
+        logger.info("cron-job.org keep-alive ensured: job %s @ %s", job_id, url)
+    except CronJobError as exc:
+        logger.warning("cron-job.org bootstrap failed: %s", exc)
+
+
 async def _notify_admins_started(bot: Bot) -> None:
     """Ping all admins in Telegram once the bot process is up."""
     import os
@@ -106,7 +134,7 @@ async def _notify_admins_started(bot: Bot) -> None:
     branch = os.environ.get("RENDER_GIT_BRANCH", "").strip()
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     text = (
-        "<b>■ Mi Host запущен</b>\n\n"
+        "<b>🖤 Mi Host запущен</b>\n\n"
         f"▪️ Коммит: <code>{sha}</code>"
         f"{f' ({branch})' if branch else ''}\n"
         f"▪️ Время: <code>{when}</code>"
@@ -174,6 +202,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     asyncio.create_task(announce_done_if_pending(bot))
 
     asyncio.create_task(_notify_admins_started(bot))
+    asyncio.create_task(_ensure_keepalive_cron())
 
     try:
         yield

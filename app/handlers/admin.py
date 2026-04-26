@@ -538,7 +538,7 @@ async def cmd_create_coupon(msg: Message, session: AsyncSession, user: User) -> 
     label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
     await msg.answer(
         "<b>🎟️ Купон создан</b>\n\n"
-        f"⚫ Код: <code>{cp.code}</code>\n"
+        f"🖤 Код: <code>{cp.code}</code>\n"
         f"▪️ Продукт: <b>{label}</b>\n"
         f"⏱ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
         f"🔢 Активаций: <b>{max_uses}</b>\n"
@@ -1422,7 +1422,7 @@ async def msg_coupon_params(
     label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
     await msg.answer(
         "<b>✓ Купон создан</b>\n\n"
-        f"⚫ Код: <code>{cp.code}</code>\n"
+        f"🖤 Код: <code>{cp.code}</code>\n"
         f"▪️ Продукт: <b>{label}</b>\n"
         f"⏱ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
         f"🔢 Активаций: <b>{max_uses}</b>\n"

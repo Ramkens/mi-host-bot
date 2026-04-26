@@ -96,7 +96,7 @@ async def cb_buy_start(
     if cb.message:
         if product == ProductKind.CARDINAL:
             await cb.message.answer(
-                "<b>■ Cardinal · 1/2</b>\n\n"
+                "<b>🖤 Cardinal · 1/2</b>\n\n"
                 "Пришли <code>golden_key</code> (32 символа).\n"
                 "<i>funpay.com → DevTools → Application → Cookies</i>\n\n"
                 "/menu — отмена",
@@ -142,7 +142,7 @@ async def receive_golden_key(
         pass
     await state.set_state(BuyFSM.awaiting_tg_token)
     await msg.answer(
-        "<b>■ Cardinal · 2/2</b>\n\n"
+        "<b>🖤 Cardinal · 2/2</b>\n\n"
         "Пришли токен Telegram-бота (<code>@BotFather</code> → <code>/newbot</code>).\n"
         "Через него ты будешь управлять Cardinal.",
         parse_mode="HTML",
@@ -416,7 +416,7 @@ async def _redeem_coupon_and_provision(
         if coupon.product != picked:
             await msg.answer(
                 f"▫️ Купон на <b>{coupon.product.value}</b>, а ты покупал "
-                f"<b>{picked.value}</b>. Начни заново через /menu → ⚫ Купить.",
+                f"<b>{picked.value}</b>. Начни заново через /menu → 🖤 Купить.",
                 parse_mode="HTML",
             )
             return
