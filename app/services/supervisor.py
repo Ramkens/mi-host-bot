@@ -39,6 +39,12 @@ except PermissionError:
 
 LOG_TAIL_LINES = 500
 
+# Crash-loop guard: if a tenant process exits RESTART_GIVEUP_AFTER times in
+# quick succession without running for at least MIN_HEALTHY_SECS, the
+# supervisor stops trying and marks the instance FAILED in the DB.
+RESTART_GIVEUP_AFTER = 6
+MIN_HEALTHY_SECS = 30
+
 
 @dataclass
 class TenantSpec:
@@ -203,14 +209,29 @@ class Supervisor:
             return
         rc = await proc.wait()
         state.last_exit = rc
+        ran_for = time.time() - state.started_at if state.started_at else 0.0
         state.proc = None
         state.started_at = None
-        state.log_tail.append(f"[supervisor] exited rc={rc}")
+        state.log_tail.append(f"[supervisor] exited rc={rc} (ran {ran_for:.1f}s)")
         if state.stop_requested:
             return
         if not state.spec.autorestart:
             return
-        state.restart_count += 1
+        # Any run that survived >= MIN_HEALTHY_SECS is "healthy" — reset the
+        # consecutive-fast-crash counter. Only fast crashes accumulate toward
+        # the giveup cap.
+        if ran_for >= MIN_HEALTHY_SECS:
+            state.restart_count = 0
+        else:
+            state.restart_count += 1
+            if state.restart_count >= RESTART_GIVEUP_AFTER:
+                state.stop_requested = True
+                state.log_tail.append(
+                    f"[supervisor] crash-loop: {RESTART_GIVEUP_AFTER} fast "
+                    f"exits in a row, giving up; status → FAILED"
+                )
+                await _mark_instance_failed(state.spec.instance_id)
+                return
         backoff = min(60.0, 2.0 ** min(state.restart_count, 6))
         state.backoff = backoff
         state.log_tail.append(f"[supervisor] restart in {backoff:.0f}s")
@@ -246,3 +267,25 @@ class Supervisor:
 
 
 supervisor = Supervisor()
+
+
+async def _mark_instance_failed(instance_id: int) -> None:
+    """Set Instance.status = FAILED in the DB after the supervisor gives up.
+
+    Imported lazily to avoid a circular module-load dependency between
+    supervisor and the DB layer.
+    """
+    try:
+        from app.db.base import SessionLocal
+        from app.db.models import InstanceStatus
+
+        async with SessionLocal() as session:
+            from app.repos import instances as inst_repo
+
+            inst = await inst_repo.by_id(session, instance_id)
+            if inst is not None:
+                inst.status = InstanceStatus.FAILED
+                inst.actual_state = "failed"
+                await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to mark instance %s as FAILED", instance_id)
