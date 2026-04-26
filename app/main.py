@@ -69,9 +69,16 @@ async def _restore_tenants() -> None:
     for inst in items:
         try:
             if inst.product == ProductKind.CARDINAL:
-                gk = (inst.config or {}).get("golden_key")
+                cfg = inst.config or {}
+                gk = cfg.get("golden_key")
                 if gk:
-                    await start_tenant(inst.id, golden_key=gk)
+                    await start_tenant(
+                        inst.id,
+                        golden_key=gk,
+                        telegram_token=cfg.get("tg_token", "") or "",
+                        secret_key_hash=cfg.get("tg_secret_hash") or None,
+                        proxy=cfg.get("proxy", "") or "",
+                    )
             else:
                 td = tenant_dir(inst.id)
                 if td.exists():
@@ -88,6 +95,27 @@ async def _restore_tenants() -> None:
                     )
         except Exception as exc:  # noqa: BLE001
             logger.warning("restore tenant %s: %s", inst.id, exc)
+
+
+async def _notify_admins_started(bot: Bot) -> None:
+    """Ping all admins in Telegram once the bot process is up."""
+    import os
+    from datetime import datetime, timezone
+
+    sha = (os.environ.get("RENDER_GIT_COMMIT") or "local")[:7]
+    branch = os.environ.get("RENDER_GIT_BRANCH", "").strip()
+    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    text = (
+        "<b>■ Mi Host запущен</b>\n\n"
+        f"▪️ Коммит: <code>{sha}</code>"
+        f"{f' ({branch})' if branch else ''}\n"
+        f"▪️ Время: <code>{when}</code>"
+    )
+    for aid in settings.admin_ids_list:
+        try:
+            await bot.send_message(aid, text, parse_mode="HTML")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("startup-notify admin %s failed: %s", aid, exc)
 
 
 @asynccontextmanager
@@ -144,6 +172,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.services.db_rotation import announce_done_if_pending
 
     asyncio.create_task(announce_done_if_pending(bot))
+
+    asyncio.create_task(_notify_admins_started(bot))
 
     try:
         yield

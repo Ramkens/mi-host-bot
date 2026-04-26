@@ -52,7 +52,7 @@ _DEFAULT_GREETINGS_TEXT = (
     "Пиши или оплати, что нужно, и пушистый продавец мигом примчится! 🐈\n"
     "\n"
     "⚡ Быстрая (или же автоматическая) выдача\n"
-    "💎 Честные цены\n"
+    "⚫ Честные цены\n"
     "🛡 Безопасная сделка\n"
     "\n"
     "Мррр... не стесняйся, кот добрый! 🐱"
@@ -288,6 +288,20 @@ def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
+def generate_password(length: int = 12) -> str:
+    """Generate a Cardinal-policy-compliant password (mixed case + digit)."""
+    import secrets
+    import string
+
+    # Guaranteed one of each category.
+    alphabet = string.ascii_letters + string.digits
+    while True:
+        pw = "".join(secrets.choice(alphabet) for _ in range(length))
+        ok, _ = validate_password(pw)
+        if ok:
+            return pw
+
+
 __all__ = (
     "default_main_cfg",
     "render_main_cfg",
@@ -296,4 +310,5 @@ __all__ = (
     "validate_proxy",
     "validate_password",
     "hash_password",
+    "generate_password",
 )

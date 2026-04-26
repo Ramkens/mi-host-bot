@@ -42,8 +42,6 @@ router = Router(name="payment")
 class BuyFSM(StatesGroup):
     awaiting_golden_key = State()
     awaiting_tg_token = State()
-    awaiting_tg_password = State()
-    awaiting_proxy = State()
     awaiting_zip = State()
     awaiting_coupon = State()
     awaiting_any_coupon = State()  # /coupon — product inferred from the code
@@ -60,11 +58,11 @@ async def cb_buy_menu(cb: CallbackQuery, state: FSMContext) -> None:
         generate_all()
     text = (
         "<b>Выбери что хостить</b>\n\n"
-        f"💠 <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
+        f"▪️ <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
         "    автозапуск, авторестарт, смена golden_key прямо в боте\n\n"
-        f"💠 <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
+        f"▪️ <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
         "    .zip с твоим Python-проектом, автоанализ + автодеплой\n\n"
-        "🔹 Сначала соберём настройки, потом выставлю счёт."
+        "▫️ Сначала соберём настройки, потом выставлю счёт."
     )
     if cb.message:
         try:
@@ -98,14 +96,10 @@ async def cb_buy_start(
     if cb.message:
         if product == ProductKind.CARDINAL:
             await cb.message.answer(
-                "<b>💠 Настройка Cardinal · Шаг 1/4</b>\n\n"
-                "Пришли свой <code>golden_key</code> (32 символа) от FunPay "
-                "одним сообщением. Он используется только для запуска твоего "
-                "инстанса и сразу удаляется из чата.\n\n"
-                "<i>Где взять:</i> funpay.com → DevTools → Application → "
-                "Cookies → <code>golden_key</code>.\n\n"
-                "Дальше: Telegram-бот → пароль → прокси.\n"
-                "« Отменить — /menu",
+                "<b>■ Cardinal · 1/2</b>\n\n"
+                "Пришли <code>golden_key</code> (32 символа).\n"
+                "<i>funpay.com → DevTools → Application → Cookies</i>\n\n"
+                "/menu — отмена",
                 parse_mode="HTML",
             )
             await state.set_state(BuyFSM.awaiting_golden_key)
@@ -148,10 +142,9 @@ async def receive_golden_key(
         pass
     await state.set_state(BuyFSM.awaiting_tg_token)
     await msg.answer(
-        "<b>Шаг 2/4 · Telegram-бот Cardinal</b>\n\n"
-        "Пришли токен своего Telegram-бота (<code>@BotFather</code> → "
-        "<code>/newbot</code>) одним сообщением — через него Cardinal будет "
-        "слать уведомления и принимать команды. <b>Обязательный шаг.</b>",
+        "<b>■ Cardinal · 2/2</b>\n\n"
+        "Пришли токен Telegram-бота (<code>@BotFather</code> → <code>/newbot</code>).\n"
+        "Через него ты будешь управлять Cardinal.",
         parse_mode="HTML",
     )
 
@@ -160,81 +153,22 @@ async def receive_golden_key(
 async def receive_tg_token(
     msg: Message, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
-    from app.services.cardinal_config import validate_tg_token
+    from app.services.cardinal_config import generate_password, hash_password, validate_tg_token
 
     raw = (msg.text or "").strip()
     if not validate_tg_token(raw):
         await msg.answer(
-            "❌ Токен не похож на настоящий. Формат: <code>123456:ABC-DEF...</code>.\n"
-            "Без Telegram-бота Cardinal запустить нельзя — создай бота у "
-            "<code>@BotFather</code> (<code>/newbot</code>) и пришли токен.",
+            "❌ Токен не тот. Формат: <code>123456:ABC-DEF...</code>",
             parse_mode="HTML",
         )
         return
-    await state.update_data(tg_token=raw)
-    try:
-        await msg.delete()
-    except Exception:  # noqa: BLE001
-        pass
-    await state.set_state(BuyFSM.awaiting_tg_password)
-    await msg.answer(
-        "<b>Шаг 3/4 · Пароль Cardinal</b>\n\n"
-        "Придумай пароль для входа в Telegram-бота Cardinal "
-        "(спросит при первом <code>/start</code>). <b>Обязательный шаг.</b>\n\n"
-        "Требования: минимум 8 символов, заглавные + строчные буквы, "
-        "хотя бы одна цифра. Например: <code>CatShop2025</code>.",
-        parse_mode="HTML",
+    # Auto-generate Cardinal admin password so the user doesn't have to pick one.
+    tg_password = generate_password()
+    await state.update_data(
+        tg_token=raw,
+        tg_pw_plain=tg_password,
+        tg_pw_hash=hash_password(tg_password),
     )
-
-
-@router.message(BuyFSM.awaiting_tg_password)
-async def receive_tg_password(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    from app.services.cardinal_config import hash_password, validate_password
-
-    pw = (msg.text or "").strip()
-    ok, err = validate_password(pw)
-    if not ok:
-        await msg.answer(f"❌ {err} Пришли другой пароль.")
-        return
-    await state.update_data(tg_pw_hash=hash_password(pw))
-    try:
-        await msg.delete()
-    except Exception:  # noqa: BLE001
-        pass
-    await state.set_state(BuyFSM.awaiting_proxy)
-    await msg.answer(
-        "<b>Шаг 4/4 · IPv4-прокси (опционально)</b>\n\n"
-        "Если хочешь гонять FunPay через прокси — пришли его в формате "
-        "<code>scheme://login:pass@ip:port</code>, <code>login:pass@ip:port</code> "
-        "или просто <code>ip:port</code>.\n\n"
-        "Если не нужен — отправь <code>-</code>.",
-        parse_mode="HTML",
-    )
-
-
-@router.message(BuyFSM.awaiting_proxy)
-async def receive_proxy(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    from app.services.cardinal_config import validate_proxy
-
-    raw = (msg.text or "").strip()
-    if raw == "-" or raw == "":
-        await state.update_data(proxy="")
-    else:
-        ok, normalized = validate_proxy(raw)
-        if not ok:
-            await msg.answer(
-                "❌ Не распознал прокси. Формат: "
-                "<code>scheme://login:pass@ip:port</code>, "
-                "<code>login:pass@ip:port</code> или <code>ip:port</code>.\n"
-                "Или отправь <code>-</code> чтобы пропустить.",
-                parse_mode="HTML",
-            )
-            return
-        await state.update_data(proxy=normalized)
     try:
         await msg.delete()
     except Exception:  # noqa: BLE001
@@ -282,19 +216,18 @@ async def _show_summary(
     tier = data.get("tier", "std")
     price = _price_for(product, tier)
     if product == ProductKind.CARDINAL:
-        tg_line = (
-            f"💠 Telegram-бот: <code>{data['tg_token'].split(':')[0]}…</code>\n"
-            if data.get("tg_token") else "💠 Telegram-бот: ⏩ пропущен\n"
-        )
-        proxy_line = (
-            f"💠 Прокси: <code>{data['proxy']}</code>\n"
-            if data.get("proxy") else "💠 Прокси: ⏩ пропущен\n"
+        tg_bot_id = (data.get("tg_token", "").split(":") or [""])[0]
+        pw_plain = data.get("tg_pw_plain", "")
+        pw_line = (
+            f"▪️ Пароль для входа в ТГ-бота: <code>{pw_plain}</code>\n"
+            f"    <i>(сохрани — покажу один раз)</i>\n"
+            if pw_plain else ""
         )
         details = (
-            f"💠 Cardinal-инстанс\n"
-            f"💠 golden_key: <code>***{data['golden_key'][-4:]}</code>\n"
-            f"{tg_line}{proxy_line}"
-            f"💠 Срок: 30 дней\n"
+            f"▪️ Cardinal · 30 дней\n"
+            f"▪️ golden_key: <code>***{data['golden_key'][-4:]}</code>\n"
+            f"▪️ Telegram-бот: <code>{tg_bot_id}</code>\n"
+            f"{pw_line}"
         )
     else:
         size_kb = data.get("zip_size", 0) // 1024
@@ -303,16 +236,16 @@ async def _show_summary(
             else settings.script_std_ram_mb
         )
         details = (
-            f"💠 Кастом-скрипт · {tier.upper()} · {ram} MB\n"
-            f"💠 Архив: <code>{data['zip_name']}</code> · {size_kb} KB\n"
-            f"💠 Срок: 30 дней\n"
+            f"▪️ Кастом-скрипт · {tier.upper()} · {ram} MB\n"
+            f"▪️ Архив: <code>{data['zip_name']}</code> · {size_kb} KB\n"
+            f"▪️ Срок: 30 дней\n"
         )
     text = (
         "<b>Проверь заказ</b>\n\n"
         f"{details}\n"
         f"<b>К оплате: {price} ₽</b>\n\n"
         "Оплата только в <b>USDT через CryptoBot</b>.\n"
-        "Хочешь другой криптой → жми «🔹 Другая крипта → саппорт» на следующем экране, "
+        "Хочешь другой криптой → жми «▫️ Другая крипта → саппорт» на следующем экране, "
         "или сразу пиши в <a href=\"tg://user?id={admin}\">саппорт</a>.\n\n"
         "Есть бесплатный купон? Жми «У меня купон»."
     ).format(admin=settings.admin_ids_list[0] if settings.admin_ids_list else 0)
@@ -380,10 +313,10 @@ async def cb_buy_invoice(
 
     text = (
         "<b>Счёт</b>\n\n"
-        f"💠 Продукт: <b>{product.value}</b>\n"
-        f"💠 Сумма: <b>{price} ₽</b> ≈ {invoice.get('amount')} {invoice.get('asset')}\n\n"
-        "🔹 Оплата только в USDT через @CryptoBot.\n"
-        "🔹 Другая крипта (TON/BTC/ETH/…) → жми кнопку «🔹 Другая крипта → саппорт».\n\n"
+        f"▪️ Продукт: <b>{product.value}</b>\n"
+        f"▪️ Сумма: <b>{price} ₽</b> ≈ {invoice.get('amount')} {invoice.get('asset')}\n\n"
+        "▫️ Оплата только в USDT через @CryptoBot.\n"
+        "▫️ Другая крипта (TON/BTC/ETH/…) → жми кнопку «▫️ Другая крипта → саппорт».\n\n"
         "После оплаты — нажми «Я оплатил» или дождись авто-проверки."
     )
     pay_url = invoice.get("pay_url") or invoice.get("bot_invoice_url")
@@ -473,7 +406,7 @@ async def _redeem_coupon_and_provision(
 ) -> None:
     ok, message, coupon = await coupons_repo.redeem(session, code, user.id)
     if not ok or not coupon:
-        await msg.answer(f"🔹 {message}")
+        await msg.answer(f"▫️ {message}")
         return
     if product_str:
         try:
@@ -482,8 +415,8 @@ async def _redeem_coupon_and_provision(
             picked = coupon.product
         if coupon.product != picked:
             await msg.answer(
-                f"🔹 Купон на <b>{coupon.product.value}</b>, а ты покупал "
-                f"<b>{picked.value}</b>. Начни заново через /menu → 💎 Купить.",
+                f"▫️ Купон на <b>{coupon.product.value}</b>, а ты покупал "
+                f"<b>{picked.value}</b>. Начни заново через /menu → ⚫ Купить.",
                 parse_mode="HTML",
             )
             return
@@ -505,7 +438,7 @@ async def _redeem_coupon_and_provision(
     label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
     span = f"{hours // 24} дн" if hours % 24 == 0 else f"{hours} ч"
     await msg.answer(
-        f"✨ Купон применён: +{span} <b>{label}</b>.",
+        f"✓ Купон применён: +{span} <b>{label}</b>.",
         parse_mode="HTML",
     )
     # Try to provision from FSM-collected settings (golden_key / zip); if
@@ -520,7 +453,7 @@ async def _redeem_coupon_and_provision(
     except Exception as exc:  # noqa: BLE001
         logger.exception("provision after coupon failed")
         await msg.answer(
-            f"🔹 Подписка активна, но запуск сервера упал: {exc}\n"
+            f"▫️ Подписка активна, но запуск сервера упал: {exc}\n"
             "Напиши /support, поможем.",
         )
     if not provisioned:
@@ -613,7 +546,7 @@ async def cb_pay_check(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     await session.commit()
 
     await cb.message.answer(
-        f"✨ Оплата подтверждена. Подписка <b>{payment.product.value}</b> "
+        f"✓ Оплата подтверждена. Подписка <b>{payment.product.value}</b> "
         f"продлена на {settings.subscription_days} дней.",
         parse_mode="HTML",
         reply_markup=back_to_menu(),
@@ -643,13 +576,11 @@ async def _provision_instance(
             return
         tg_token = data.get("tg_token") or ""
         tg_pw_hash = data.get("tg_pw_hash") or ""
-        proxy = data.get("proxy") or ""
         new_cfg_extras = {
             "golden_key": gk,
             "tier": tier,
             "tg_token": tg_token,
             "tg_secret_hash": tg_pw_hash,
-            "proxy": proxy,
         }
         existing = await inst_repo.list_for_user(session, user_id, ProductKind.CARDINAL)
         if existing:
@@ -674,7 +605,6 @@ async def _provision_instance(
                     golden_key=gk,
                     telegram_token=tg_token,
                     secret_key_hash=tg_pw_hash or None,
-                    proxy=proxy,
                 )
                 inst.status = InstanceStatus.LIVE
                 inst.actual_state = "live"

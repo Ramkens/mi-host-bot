@@ -107,7 +107,7 @@ async def purge_expired_tenants(bot: "Bot") -> int:
                         PRIMARY_ADMIN_ID,
                         BufferedInputFile(data, filename=fname),
                         caption=(
-                            f"💠 Авто-бэкап перед удалением\n"
+                            f"▪️ Авто-бэкап перед удалением\n"
                             f"user_id: <code>{sub.user_id}</code>\n"
                             f"продукт: {sub.product.value}\n"
                             f"истекла: {fmt_msk(sub.expires_at)} (≥{grace} дн.)\n"
@@ -135,7 +135,7 @@ async def purge_expired_tenants(bot: "Bot") -> int:
             try:
                 await bot.send_message(
                     sub.user_id,
-                    "💠 <b>Данные хоста удалены</b>\n\n"
+                    "▪️ <b>Данные хоста удалены</b>\n\n"
                     f"Подписка <b>{sub.product.value}</b> истекла больше {grace} дней назад. "
                     "Все файлы инстанса удалены. Бэкап сохранён у админа — "
                     "для восстановления напиши в /support.\n\n"

@@ -12,7 +12,7 @@ from app.db.models import ProductKind
 def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(text="💎 Купить хостинг", callback_data="buy:menu"),
+            InlineKeyboardButton(text="⚫ Купить хостинг", callback_data="buy:menu"),
             InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
         ],
         [
@@ -36,19 +36,19 @@ def buy_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💠 FunPay Cardinal · 40 ₽ / мес",
+                    text="▪️ FunPay Cardinal · 40 ₽ / мес",
                     callback_data=f"buy:start:{ProductKind.CARDINAL.value}:std",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🔹 Скрипт STD · 130 MB · 50 ₽ / мес",
+                    text="▫️ Скрипт STD · 130 MB · 50 ₽ / мес",
                     callback_data=f"buy:start:{ProductKind.SCRIPT.value}:std",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💎 Скрипт PRO · 512 MB · 150 ₽ / мес",
+                    text="⚫ Скрипт PRO · 512 MB · 150 ₽ / мес",
                     callback_data=f"buy:start:{ProductKind.SCRIPT.value}:pro",
                 )
             ],
@@ -85,7 +85,7 @@ def admin_menu() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="👤 Юзер", callback_data="admin:user"),
             ],
             [
-                InlineKeyboardButton(text="💎 Подписки", callback_data="admin:subs"),
+                InlineKeyboardButton(text="⚫ Подписки", callback_data="admin:subs"),
                 InlineKeyboardButton(text="🎟️ Купоны", callback_data="admin:coupons"),
             ],
             [
@@ -114,7 +114,7 @@ def admin_back() -> InlineKeyboardMarkup:
 def admin_subs_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💎 Выдать подписку", callback_data="admin:sub:grant")],
+            [InlineKeyboardButton(text="⚫ Выдать подписку", callback_data="admin:sub:grant")],
             [InlineKeyboardButton(text="➕ Добавить дни", callback_data="admin:sub:add")],
             [InlineKeyboardButton(text="➖ Снять дни", callback_data="admin:sub:remove")],
             [InlineKeyboardButton(text="🚫 Отозвать подписку", callback_data="admin:sub:revoke")],
@@ -132,15 +132,15 @@ def admin_pick_product(action: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💠 Cardinal",
+                    text="▪️ Cardinal",
                     callback_data=f"admin:sub:{action}:p:{ProductKind.CARDINAL.value}",
                 ),
                 InlineKeyboardButton(
-                    text="🔹 Script STD",
+                    text="▫️ Script STD",
                     callback_data=f"admin:sub:{action}:p:{ProductKind.SCRIPT.value}:std",
                 ),
                 InlineKeyboardButton(
-                    text="💎 Script PRO",
+                    text="⚫ Script PRO",
                     callback_data=f"admin:sub:{action}:p:{ProductKind.SCRIPT.value}:pro",
                 ),
             ],
@@ -195,19 +195,19 @@ def admin_coupon_pick_product() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💠 Cardinal",
+                    text="▪️ Cardinal",
                     callback_data=f"admin:coupon:p:{ProductKind.CARDINAL.value}:std",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🔹 Script STD",
+                    text="▫️ Script STD",
                     callback_data=f"admin:coupon:p:{ProductKind.SCRIPT.value}:std",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💎 Script PRO",
+                    text="⚫ Script PRO",
                     callback_data=f"admin:coupon:p:{ProductKind.SCRIPT.value}:pro",
                 )
             ],
