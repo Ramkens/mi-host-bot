@@ -21,7 +21,9 @@ class Settings(BaseSettings):
     )
 
     # --- Telegram ---
-    bot_token: str = Field(..., min_length=20)
+    # Required on master, optional on worker (worker is headless and never
+    # talks to Telegram, so an empty BOT_TOKEN is fine there).
+    bot_token: str = ""
     admin_ids: str = ""  # comma-separated ints, mutable via /addadmin
 
     # --- HTTP / Webhook ---
