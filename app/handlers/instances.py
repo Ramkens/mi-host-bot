@@ -168,20 +168,28 @@ async def cb_inst_start(
         await cb.answer("Не найдено", show_alert=True)
         return
     if inst.product == ProductKind.CARDINAL:
-        from app.services.cardinal import start_tenant
-
         cfg = inst.config or {}
         gk = cfg.get("golden_key")
         if not gk:
             await cb.answer("Сначала задайте golden_key", show_alert=True)
             return
-        await start_tenant(
-            inst.id,
-            golden_key=gk,
-            telegram_token=cfg.get("tg_token", "") or "",
-            secret_key_hash=cfg.get("tg_secret_hash") or None,
-            proxy=cfg.get("proxy", "") or "",
-        )
+        if inst.shard_id is None:
+            from app.services.cardinal import start_tenant
+
+            await start_tenant(
+                inst.id,
+                golden_key=gk,
+                telegram_token=cfg.get("tg_token", "") or "",
+                secret_key_hash=cfg.get("tg_secret_hash") or None,
+                proxy=cfg.get("proxy", "") or "",
+            )
+        else:
+            # Shard-assigned: master's supervisor must not spawn it. Just
+            # flip desired_state and let the worker pick it up on its
+            # next reconcile pass (~10s).
+            inst.desired_state = "live"
+            inst.status = InstanceStatus.DEPLOYING
+            await session.commit()
     else:
         # script: spawn from existing tenant dir if exists
         from app.services.script_host import tenant_dir
@@ -217,8 +225,12 @@ async def cb_inst_stop(
     if not inst or inst.user_id != user.id:
         await cb.answer("Не найдено", show_alert=True)
         return
-    await supervisor.stop(inst.id)
+    inst.desired_state = "stopped"
+    if inst.shard_id is None:
+        await supervisor.stop(inst.id)
+        inst.actual_state = "stopped"
     inst.status = InstanceStatus.SUSPENDED
+    await session.commit()
     await cb.answer("Остановлено")
     await cb_inst_open(cb, session, user)
 
@@ -232,8 +244,35 @@ async def cb_inst_restart(
     if not inst or inst.user_id != user.id:
         await cb.answer("Не найдено", show_alert=True)
         return
-    await supervisor.restart(inst.id)
+    cfg = inst.config or {}
+    inst.desired_state = "live"
+    if inst.shard_id is None:
+        if inst.product == ProductKind.CARDINAL:
+            from app.services.cardinal import start_tenant
+
+            gk = cfg.get("golden_key")
+            if gk:
+                # Re-run start_tenant rather than supervisor.restart so
+                # _main.cfg is rewritten with the latest tg_token / hash.
+                await start_tenant(
+                    inst.id,
+                    golden_key=gk,
+                    telegram_token=cfg.get("tg_token", "") or "",
+                    secret_key_hash=cfg.get("tg_secret_hash") or None,
+                    proxy=cfg.get("proxy", "") or "",
+                )
+            else:
+                await supervisor.restart(inst.id)
+        else:
+            await supervisor.restart(inst.id)
+    else:
+        # Shard-assigned: ask the worker to do a full restart by
+        # bouncing desired_state.
+        inst.desired_state = "stopped"
+        await session.commit()
+        inst.desired_state = "live"
     inst.status = InstanceStatus.LIVE
+    await session.commit()
     await cb.answer("Перезапущено")
     await cb_inst_open(cb, session, user)
 
