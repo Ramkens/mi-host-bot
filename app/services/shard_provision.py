@@ -36,6 +36,20 @@ async def _master_external_db_url() -> str:
     return ext
 
 
+def _master_branch() -> str:
+    """Whatever branch the master is currently deployed from.
+
+    Render injects RENDER_GIT_BRANCH at runtime; if absent (local dev)
+    fall back to ``main``. Workers must pull from the same branch so
+    they import the same code as master — a worker built from `main`
+    while master runs a feature branch will speak a different DB
+    schema and SHIM contract.
+    """
+    import os
+
+    return (os.environ.get("RENDER_GIT_BRANCH") or "main").strip() or "main"
+
+
 async def provision_worker(
     session, shard_id: int, *, repo_url: str = GITHUB_REPO_URL
 ) -> dict:
@@ -86,7 +100,7 @@ async def provision_worker(
         service = await rc.create_web_service(
             name=f"mi-host-{shard.name}",
             repo=repo_url,
-            branch="main",
+            branch=_master_branch(),
             runtime="python",
             build_cmd="pip install --upgrade pip && pip install -r requirements.txt",
             start_cmd="python -m app.main",
