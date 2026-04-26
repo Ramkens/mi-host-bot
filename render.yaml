@@ -1,7 +1,7 @@
 services:
   - type: web
     name: mi-host-bot
-    plan: starter
+    plan: free
     runtime: python
     region: frankfurt
     rootDir: .
@@ -10,17 +10,11 @@ services:
     healthCheckPath: /healthz
     autoDeploy: true
     branch: main
-    disk:
-      name: mihost-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: TZ
         value: Europe/Moscow
-      - key: PORT
-        value: "10000"
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_IDS
@@ -35,10 +29,9 @@ services:
         sync: false
       - key: CHAT_ID
         sync: false
+      # External Postgres connection string (Neon / Supabase / etc.)
       - key: DATABASE_URL
-        fromDatabase:
-          name: mi-host-db
-          property: connectionString
+        sync: false
       - key: CRYPTOBOT_TOKEN
         sync: false
       - key: CRYPTOBOT_WEBHOOK_SECRET
@@ -51,8 +44,10 @@ services:
         sync: false
       - key: SECRET_KEY
         generateValue: true
+      # No persistent disk on free tier — store under /tmp; tenants are
+      # re-provisioned from DB state on every boot via _restore_tenants.
       - key: MIHOST_DATA_DIR
-        value: /var/data/mihost
+        value: /tmp/mihost
       - key: SUBSCRIPTION_DAYS
         value: "30"
       - key: PRICE_CARDINAL_RUB
@@ -65,10 +60,3 @@ services:
         value: "1"
       - key: REFERRAL_BONUS_DAYS
         value: "3"
-
-databases:
-  - name: mi-host-db
-    plan: free
-    region: frankfurt
-    databaseName: mihost
-    user: mihost
