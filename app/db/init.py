@@ -39,14 +39,14 @@ _SCHEMA_PATCHES = (
 
 async def _apply_patches() -> None:
     """Apply idempotent ALTERs. SQLite doesn't support IF NOT EXISTS on
-    ADD COLUMN, so fall back to catching OperationalError on each stmt.
-    """
+ ADD COLUMN, so fall back to catching OperationalError on each stmt.
+ """
     async with engine.begin() as conn:
         dialect = conn.dialect.name  # "postgresql" | "sqlite" | ...
         for stmt in _SCHEMA_PATCHES:
             sql = stmt
             if dialect == "sqlite" and "IF NOT EXISTS" in sql:
-                sql = sql.replace(" IF NOT EXISTS", "")
+                sql = sql.replace("IF NOT EXISTS", "")
             try:
                 await conn.execute(text(sql))
             except Exception as exc:  # noqa: BLE001

@@ -175,25 +175,25 @@ cfg_path = Path(__file__).parent / 'configs' / '_main.cfg'
 key = os.environ.get('GOLDEN_KEY', '')
 ua = os.environ.get('USER_AGENT', '')
 if cfg_path.exists() and key:
-    cp = ConfigParser(delimiters=(':',), interpolation=None)
-    cp.optionxform = str
-    cp.read_file(codecs.open(str(cfg_path), 'r', 'utf8'))
-    if not cp.has_section('FunPay'):
-        cp.add_section('FunPay')
-    cp.set('FunPay', 'golden_key', key)
-    if ua:
-        cp.set('FunPay', 'user_agent', ua)
-    with cfg_path.open('w', encoding='utf-8') as f:
-        cp.write(f, space_around_delimiters=True)
+ cp = ConfigParser(delimiters=(':',), interpolation=None)
+ cp.optionxform = str
+ cp.read_file(codecs.open(str(cfg_path), 'r', 'utf8'))
+ if not cp.has_section('FunPay'):
+ cp.add_section('FunPay')
+ cp.set('FunPay', 'golden_key', key)
+ if ua:
+ cp.set('FunPay', 'user_agent', ua)
+ with cfg_path.open('w', encoding='utf-8') as f:
+ cp.write(f, space_around_delimiters=True)
 
 sys.argv = ['main.py']
 try:
-    runpy.run_path('main.py', run_name='__main__')
+ runpy.run_path('main.py', run_name='__main__')
 except SystemExit:
-    raise
+ raise
 except Exception as exc:
-    print(f'[mihost] cardinal crashed: {exc!r}')
-    raise
+ print(f'[mihost] cardinal crashed: {exc!r}')
+ raise
 """
 
 
@@ -257,11 +257,11 @@ def read_main_cfg(instance_id: int) -> dict[str, dict[str, str]]:
 async def write_user_main_cfg(instance_id: int, raw: str) -> tuple[bool, str]:
     """Replace the tenant's ``_main.cfg`` with raw user-uploaded content.
 
-    Returns (ok, message). Validates by parsing through ConfigParser; we
-    don't run Cardinal's full ``load_main_config`` because that requires
-    bcrypt-hashed secretKeyHash and other fields the user may legitimately
-    want to defer.
-    """
+ Returns (ok, message). Validates by parsing through ConfigParser; we
+ don't run Cardinal's full ``load_main_config`` because that requires
+ bcrypt-hashed secretKeyHash and other fields the user may legitimately
+ want to defer.
+ """
     import codecs
     import io
     from configparser import ConfigParser, Error as ConfigParserError

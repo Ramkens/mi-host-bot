@@ -6,11 +6,11 @@ This module:
 1. Reads expiry of the current DATABASE_URL via the Render API.
 2. ~3 days before expiry, provisions a *new* free Postgres on Render.
 3. Copies every row from old → new using asyncpg (no pg_dump needed; the
-   schema is recreated by SQLAlchemy on the next boot).
+ schema is recreated by SQLAlchemy on the next boot).
 4. Updates the `DATABASE_URL` env var on this service.
 5. Triggers a redeploy (which restarts the bot pointing at the new DB).
 6. Notifies users with active subscriptions: "месяц прошёл, обновление
-   серверов…" before the swap, "готово" after the new instance is live.
+ серверов…" before the swap, "готово" after the new instance is live.
 
 The orchestration is best-effort and idempotent — if a step fails, the
 scheduler will try again on the next tick.
@@ -47,8 +47,8 @@ def _normalize_asyncpg(url: str) -> str:
 
 def _extract_pg_host_id(url: str) -> Optional[str]:
     """The Render postgres host looks like dpg-XXX-a.frankfurt-postgres.render.com.
-    The Render *service id* is `dpg-XXX-a`.
-    """
+ The Render *service id* is `dpg-XXX-a`.
+ """
     try:
         host = urlparse(url).hostname or ""
     except Exception:
@@ -122,8 +122,8 @@ async def _notify_active(
 async def _copy_data(src_url: str, dst_url: str) -> None:
     """Bulk-copy every row from each ORM-mapped table from src to dst.
 
-    Schema in `dst` must already exist (we create it via SQLAlchemy first).
-    """
+ Schema in `dst` must already exist (we create it via SQLAlchemy first).
+ """
     src = await asyncpg.connect(src_url)
     dst = await asyncpg.connect(dst_url)
     try:
@@ -209,7 +209,7 @@ async def rotate_now(bot, *, force: bool = False) -> dict:
     # Step 3 — notify users that maintenance is starting.
     await _notify_active(
         bot,
-        "⚙ <b>Обновление серверов</b>\n\n"
+        "<b>Обновление серверов</b>\n\n"
         "Месяц хоста прошёл, переносим вас на новый сервер. "
         "Это займёт несколько минут — инстансы могут быть недоступны. "
         "Как только закончим, я напишу.",
@@ -227,7 +227,7 @@ async def rotate_now(bot, *, force: bool = False) -> dict:
         logger.exception("db copy failed")
         await _notify_active(
             bot,
-            "⚠ Сбой обновления серверов. Попробуем снова автоматически. "
+            "Сбой обновления серверов. Попробуем снова автоматически. "
             "Извините за неудобства.",
         )
         return {"ok": False, "reason": f"copy failed: {exc}"}
@@ -291,6 +291,6 @@ async def announce_done_if_pending(bot) -> None:
         await s.commit()
     await _notify_active(
         bot,
-        "✓ <b>Готово</b>\n\n"
+        "<b>Готово</b>\n\n"
         "Серверы обновлены, ваш инстанс снова работает. Спасибо за терпение.",
     )

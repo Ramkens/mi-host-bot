@@ -50,11 +50,11 @@ async def extend_hours(
 ) -> Subscription:
     """Hour-precision variant of :func:`extend`.
 
-    Positive values push `expires_at` forward (from now or its current
-    value, whichever is later), negative values roll it back (never past
-    "now" by the caller convention — callers that want to "expire now"
-    should set `expires_at = now_utc()` directly).
-    """
+ Positive values push `expires_at` forward (from now or its current
+ value, whichever is later), negative values roll it back (never past
+ "now" by the caller convention — callers that want to "expire now"
+ should set `expires_at = now_utc()` directly).
+ """
     sub = await get(session, user_id, product)
     base = max(now_utc(), sub.expires_at) if sub and sub.expires_at else now_utc()
     new_expires = base + timedelta(hours=hours)

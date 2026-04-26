@@ -19,7 +19,7 @@ class ThrottleMiddleware(BaseMiddleware):
         user = data.get("event_from_user")
         if user is not None and not public_limiter.allow(user.id, cost=1.0):
             if isinstance(event, CallbackQuery):
-                await event.answer("◷ Слишком часто. Подождите секунду.", show_alert=False)
+                await event.answer("Слишком часто. Подождите секунду.", show_alert=False)
                 return None
             if isinstance(event, Message):
                 # silently drop spam

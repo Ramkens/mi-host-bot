@@ -1,9 +1,9 @@
 """Mi Host entrypoint.
 
 * FastAPI hosts:
-    - /healthz         (used by Render & cron-job.org)
-    - /tg/webhook      (Telegram webhook target)
-    - /webhooks/cryptobot (CryptoBot payment notifications)
+ - /healthz (used by Render & cron-job.org)
+ - /tg/webhook (Telegram webhook target)
+ - /webhooks/cryptobot (CryptoBot payment notifications)
 * Aiogram dispatcher is wired to FastAPI via aiogram.webhook.
 * Background scheduler runs autoposts/funnel/keepalive.
 * Supervisor restores tenants on boot from the DB.
@@ -100,11 +100,11 @@ async def _restore_tenants() -> None:
 async def _ensure_keepalive_cron() -> None:
     """Re-apply the cron-job.org keep-alive config on every boot.
 
-    The contract we enforce: one GET job against ``/healthz``, enabled, firing
-    every minute, with failure notifications OFF so a cold-start 5xx doesn't
-    auto-disable the pinger. Idempotent — if mi-host-bot reboots a thousand
-    times the job just stays correctly configured.
-    """
+ The contract we enforce: one GET job against ``/healthz``, enabled, firing
+ every minute, with failure notifications OFF so a cold-start 5xx doesn't
+ auto-disable the pinger. Idempotent — if mi-host-bot reboots a thousand
+ times the job just stays correctly configured.
+ """
     from app.services.cron import CronJobClient, CronJobError
 
     client = CronJobClient()
@@ -134,7 +134,7 @@ async def _notify_admins_started(bot: Bot) -> None:
     branch = os.environ.get("RENDER_GIT_BRANCH", "").strip()
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     text = (
-        "<b>🖤 Mi Host запущен</b>\n\n"
+        "<b>Mi Host запущен</b>\n\n"
         f"• Коммит: <code>{sha}</code>"
         f"{f' ({branch})' if branch else ''}\n"
         f"• Время: <code>{when}</code>"

@@ -37,14 +37,17 @@ class SetupFSM(StatesGroup):
 
 
 def _status_icon(st: InstanceStatus) -> str:
+    # Green = running, yellow = in-between (pending/deploying/suspended),
+    # red = failed/deleted. These three are the only decorative emoji in the
+    # whole bot UI (per user preference).
     return {
-        InstanceStatus.LIVE: "●",
-        InstanceStatus.DEPLOYING: "◐",
-        InstanceStatus.PENDING: "⚪",
-        InstanceStatus.SUSPENDED: "◒",
-        InstanceStatus.FAILED: "○",
-        InstanceStatus.DELETED: "🖤",
-    }.get(st, "⚪")
+        InstanceStatus.LIVE: "🟢",
+        InstanceStatus.DEPLOYING: "🟡",
+        InstanceStatus.PENDING: "🟡",
+        InstanceStatus.SUSPENDED: "🟡",
+        InstanceStatus.FAILED: "🔴",
+        InstanceStatus.DELETED: "🔴",
+    }.get(st, "🟡")
 
 
 @router.callback_query(F.data == "instances")
@@ -54,8 +57,8 @@ async def cb_instances(
     items = await inst_repo.list_for_user(session, user.id)
     if not items:
         text = (
-            "<b>▣ Мои серверы</b>\n\n"
-            "Серверов пока нет. Купи подписку через /menu → 🖤 Купить "
+            "<b>Мои серверы</b>\n\n"
+            "Серверов пока нет. Купи подписку через /menu → Купить "
             "или активируй купон через /coupon."
         )
         if cb.message:
@@ -69,13 +72,13 @@ async def cb_instances(
                 )
         await cb.answer()
         return
-    lines = ["<b>▣ Мои серверы</b>", ""]
+    lines = ["<b>Мои серверы</b>", ""]
     rows = []
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     for inst in items:
         tier = ((inst.config or {}).get("tier") or "std").lower()
-        tier_suffix = " PRO" if tier == "pro" else ""
+        tier_suffix = "PRO" if tier == "pro" else ""
         lines.append(
             f"{_status_icon(inst.status)} #{inst.id} · "
             f"{inst.product.value}{tier_suffix} · {inst.status.value}"
@@ -89,7 +92,7 @@ async def cb_instances(
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="menu")])
+    rows.append([InlineKeyboardButton(text="В меню", callback_data="menu")])
     text = "\n".join(lines)
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     if cb.message:
@@ -111,7 +114,7 @@ async def cb_inst_open(
         return
     s = supervisor.status(inst_id)
     tier = ((inst.config or {}).get("tier") or "std").lower()
-    tier_suffix = " PRO" if tier == "pro" else ""
+    tier_suffix = "PRO" if tier == "pro" else ""
     need_setup = inst.status == InstanceStatus.PENDING or (
         inst.product == ProductKind.CARDINAL
         and not (inst.config or {}).get("golden_key")
@@ -120,12 +123,12 @@ async def cb_inst_open(
     if need_setup:
         if inst.product == ProductKind.CARDINAL:
             setup_hint = (
-                "\n\n⚙ <b>Нужна настройка</b> — нажми «⚙ Настроить» и пришли "
+                "\n\n <b>Нужна настройка</b> — нажми « Настроить» и пришли "
                 "<code>golden_key</code>."
             )
         else:
             setup_hint = (
-                "\n\n⚙ <b>Нужна настройка</b> — нажми «⚙ Настроить» и "
+                "\n\n <b>Нужна настройка</b> — нажми « Настроить» и "
                 "загрузи <code>.zip</code> со скриптом."
             )
     text = (
@@ -273,7 +276,7 @@ async def cb_inst_setup(
         await state.set_state(SetupFSM.awaiting_golden_key)
         if cb.message:
             await cb.message.answer(
-                "<b>🖤 Cardinal · 1/2</b>\n\n"
+                "<b>Cardinal · 1/2</b>\n\n"
                 "Пришли <code>golden_key</code> (32 символа).\n"
                 "<i>funpay.com → DevTools → Application → Cookies</i>\n\n"
                 "/cancel — отмена",
@@ -283,7 +286,7 @@ async def cb_inst_setup(
         await state.set_state(SetupFSM.awaiting_zip)
         if cb.message:
             await cb.message.answer(
-                "❒ Пришли .zip-архив с Python-проектом одним документом (до 25 MB).\n"
+                "Пришли .zip-архив с Python-проектом одним документом (до 25 MB).\n"
                 "Внутри — <code>main.py</code> и опц. <code>requirements.txt</code>.\n\n"
                 "/cancel — отмена.",
                 parse_mode="HTML",
@@ -302,7 +305,7 @@ async def setup_receive_key(
         return
     if len(text) != 32:
         await msg.answer(
-            "✗ golden_key должен быть 32 символа. Скопируй cookie с funpay.com целиком."
+            "golden_key должен быть 32 символа. Скопируй cookie с funpay.com целиком."
         )
         return
     await state.update_data(setup_golden_key=text)
@@ -312,7 +315,7 @@ async def setup_receive_key(
         pass
     await state.set_state(SetupFSM.awaiting_tg_token)
     await msg.answer(
-        "<b>🖤 Cardinal · 2/2</b>\n\n"
+        "<b>Cardinal · 2/2</b>\n\n"
         "Пришли токен Telegram-бота (<code>@BotFather → /newbot</code>).\n"
         "Через него ты будешь управлять Cardinal.",
         parse_mode="HTML",
@@ -332,7 +335,7 @@ async def setup_receive_tg_token(
         return
     if not validate_tg_token(raw):
         await msg.answer(
-            "✗ Токен не подходит. Формат: <code>123456:ABC-DEF...</code>\n"
+            "Токен не подходит. Формат: <code>123456:ABC-DEF...</code>\n"
             "Скопируй его целиком у <code>@BotFather</code>.",
             parse_mode="HTML",
         )
@@ -353,14 +356,14 @@ async def setup_receive_tg_token(
             ],
             [
                 InlineKeyboardButton(
-                    text="✎ Придумаю свой",
+                    text="Придумаю свой",
                     callback_data="setup:pw:custom",
                 )
             ],
         ]
     )
     await msg.answer(
-        "<b>🖤 Cardinal · пароль</b>\n\n"
+        "<b>Cardinal · пароль</b>\n\n"
         "Этим паролем ты будешь входить в свой Telegram-бот Cardinal. "
         "Можно сгенерировать автоматически или задать самому.",
         parse_mode="HTML",
@@ -390,7 +393,7 @@ async def setup_cb_pw_custom(cb: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SetupFSM.awaiting_pw_custom)
     if cb.message:
         await cb.message.answer(
-            "✎ Пришли пароль одним сообщением.\n"
+            "Пришли пароль одним сообщением.\n"
             "<i>Требования:</i> минимум 8 символов, заглавные + строчные буквы "
             "и хотя бы одна цифра.",
             parse_mode="HTML",
@@ -514,7 +517,7 @@ async def setup_receive_zip(
             inst.status = InstanceStatus.FAILED
             await session.commit()
             await msg.answer(
-                "○ Архив не прошёл безопасный анализ. "
+                "Архив не прошёл безопасный анализ. "
                 f"{analysis.report or ''}".strip(),
                 reply_markup=instance_actions(inst.id, inst.product.value),
             )

@@ -100,7 +100,7 @@ async def purge_expired_tenants(bot: "Bot") -> int:
             if data is not None:
                 fname = (
                     f"backup_user{sub.user_id}_{sub.product.value}_inst{inst.id}_"
-                    f"{fmt_msk(now_utc()).replace(' ', '_').replace(':','')}.zip"
+                    f"{fmt_msk(now_utc()).replace('', '_').replace(':','')}.zip"
                 )
                 try:
                     await bot.send_document(

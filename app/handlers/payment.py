@@ -68,9 +68,9 @@ async def cb_buy_menu(cb: CallbackQuery, state: FSMContext) -> None:
     text = (
         "<b>Выбери что хостить</b>\n\n"
         f"• <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
-        "    автозапуск, авторестарт, смена golden_key прямо в боте\n\n"
+        "автозапуск, авторестарт, смена golden_key прямо в боте\n\n"
         f"• <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
-        "    .zip с твоим Python-проектом, автоанализ + автодеплой\n\n"
+        ".zip с твоим Python-проектом, автоанализ + автодеплой\n\n"
         "· Сначала соберём настройки, потом выставлю счёт."
     )
     if cb.message:
@@ -105,7 +105,7 @@ async def cb_buy_start(
     if cb.message:
         if product == ProductKind.CARDINAL:
             await cb.message.answer(
-                "<b>🖤 Cardinal · 1/2</b>\n\n"
+                "<b>Cardinal · 1/2</b>\n\n"
                 "Пришли <code>golden_key</code> (32 символа).\n"
                 "<i>funpay.com → DevTools → Application → Cookies</i>\n\n"
                 "/menu — отмена",
@@ -138,7 +138,7 @@ async def receive_golden_key(
     key = (msg.text or "").strip()
     if len(key) != 32:
         await msg.answer(
-            "✗ golden_key должен быть ровно 32 символа. Скопируй cookie "
+            "golden_key должен быть ровно 32 символа. Скопируй cookie "
             "<code>golden_key</code> с funpay.com полностью и пришли ещё раз.",
             parse_mode="HTML",
         )
@@ -151,7 +151,7 @@ async def receive_golden_key(
         pass
     await state.set_state(BuyFSM.awaiting_tg_token)
     await msg.answer(
-        "<b>🖤 Cardinal · 2/2</b>\n\n"
+        "<b>Cardinal · 2/2</b>\n\n"
         "Пришли токен Telegram-бота (<code>@BotFather</code> → <code>/newbot</code>).\n"
         "Через него ты будешь управлять Cardinal.",
         parse_mode="HTML",
@@ -167,7 +167,7 @@ async def receive_tg_token(
     raw = (msg.text or "").strip()
     if not validate_tg_token(raw):
         await msg.answer(
-            "✗ Токен не подходит. Формат: <code>123456:ABC-DEF...</code>\n"
+            "Токен не подходит. Формат: <code>123456:ABC-DEF...</code>\n"
             "Проверь, что скопировал его целиком из <code>@BotFather</code>.",
             parse_mode="HTML",
         )
@@ -188,14 +188,14 @@ async def receive_tg_token(
             ],
             [
                 InlineKeyboardButton(
-                    text="✎ Придумаю свой",
+                    text="Придумаю свой",
                     callback_data="buy:pw:custom",
                 )
             ],
         ]
     )
     await msg.answer(
-        "<b>🖤 Cardinal · пароль</b>\n\n"
+        "<b>Cardinal · пароль</b>\n\n"
         "Этим паролем ты будешь входить в свой Telegram-бот Cardinal. "
         "Можно сгенерировать автоматически или задать самому.",
         parse_mode="HTML",
@@ -229,7 +229,7 @@ async def cb_pw_custom(
     await state.set_state(BuyFSM.awaiting_pw_custom)
     if cb.message:
         await cb.message.answer(
-            "✎ Пришли пароль одним сообщением.\n"
+            "Пришли пароль одним сообщением.\n"
             "<i>Требования:</i> минимум 8 символов, заглавные + строчные буквы "
             "и хотя бы одна цифра.",
             parse_mode="HTML",
@@ -444,7 +444,7 @@ async def cmd_coupon(
         return
     await state.set_state(BuyFSM.awaiting_any_coupon)
     await msg.answer(
-        "🎟️ Пришли код купона одним сообщением (формат <code>MH-XXXXXXXX</code>).\n"
+        "Пришли код купона одним сообщением (формат <code>MH-XXXXXXXX</code>).\n"
         "/cancel — отмена.",
         parse_mode="HTML",
     )
@@ -510,7 +510,7 @@ async def _redeem_coupon_and_provision(
     await logs_repo.write(
         session,
         kind="coupon.redeemed",
-        message=f"{code} · +{hours}h {product.value}{' PRO' if tier == 'pro' else ''}",
+        message=f"{code} · +{hours}h {product.value}{'PRO' if tier == 'pro' else ''}",
         user_id=user.id,
         meta={"code": code, "tier": tier, "hours": hours},
     )
@@ -520,7 +520,7 @@ async def _redeem_coupon_and_provision(
     # (golden_key / tg_token / password / zip) so we never re-ask for them.
     fsm_data = await state.get_data()
     merged_data: dict = {**fsm_data, **(data or {}), "tier": tier}
-    label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
+    label = f"{product.value}{'PRO' if tier == 'pro' else ''}"
     span = f"{hours // 24} дн" if hours % 24 == 0 else f"{hours} ч"
     # Try to provision from FSM-collected settings (golden_key / zip); if
     # none available, fall through to a placeholder instance row.
@@ -577,8 +577,8 @@ async def _ensure_placeholder_instance(
     tier: str = "std",
 ) -> None:
     """Ensure the user has at least one Instance row for this product so the
-    server is visible in the 'Мои серверы' screen even before they upload
-    their config. Idempotent."""
+ server is visible in the 'Мои серверы' screen even before they upload
+ their config. Idempotent."""
     from app.db.models import InstanceStatus
 
     existing = await inst_repo.list_for_user(session, user_id, product)
@@ -668,7 +668,7 @@ def _kickoff_hint(product: ProductKind) -> str:
         )
     return (
         "• Твой скрипт запустится в течение ~5 минут.\n"
-        "Следить за состоянием: /menu → ▣ Мои серверы."
+        "Следить за состоянием: /menu → Мои серверы."
     )
 
 

@@ -272,7 +272,7 @@ async def receive_resp_cfg(
         return
     success, message = await write_user_aux_cfg(inst.id, "auto_response.cfg", content)
     await msg.answer(
-        f"{'✓' if success else '·'} {message}",
+        f"{'' if success else '·'} {message}",
         reply_markup=instance_actions(inst.id, inst.product.value)
         if success
         else None,
@@ -304,7 +304,7 @@ async def receive_deliv_cfg(
         return
     success, message = await write_user_aux_cfg(inst.id, "auto_delivery.cfg", content)
     await msg.answer(
-        f"{'✓' if success else '·'} {message}",
+        f"{'' if success else '·'} {message}",
         reply_markup=instance_actions(inst.id, inst.product.value)
         if success
         else None,

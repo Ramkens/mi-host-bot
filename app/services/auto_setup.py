@@ -27,7 +27,7 @@ def derive_spec(analysis: AnalysisResult) -> DeploySpec:
         build_parts.append("pip install aiogram pyrogram tgcrypto")
     elif has_fastapi:
         build_parts.append("pip install fastapi uvicorn")
-    build_cmd = " && ".join(build_parts)
+    build_cmd = "&& ".join(build_parts)
 
     if analysis.entrypoint:
         if has_fastapi and analysis.entrypoint.endswith(".py"):

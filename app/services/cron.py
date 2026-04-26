@@ -55,12 +55,12 @@ class CronJobClient:
     def _keepalive_body(self, *, title: str, url: str, every_minutes: int = 1) -> dict:
         """Build a cron-job.org request body for a keep-alive pinger.
 
-        ``every_minutes=1`` uses the ``[-1]`` wildcard so the job fires every
-        minute (minute-resolution is the finest cron-job.org supports).
-        Notifications on failure are disabled so a flurry of 5xx errors from
-        Render during a cold start doesn't auto-disable the job or spam the
-        owner's mailbox. ``onDisable`` stays on so manual disables still ping.
-        """
+ ``every_minutes=1`` uses the ``[-1]`` wildcard so the job fires every
+ minute (minute-resolution is the finest cron-job.org supports).
+ Notifications on failure are disabled so a flurry of 5xx errors from
+ Render during a cold start doesn't auto-disable the job or spam the
+ owner's mailbox. ``onDisable`` stays on so manual disables still ping.
+ """
         if every_minutes <= 1:
             minutes: list[int] = [-1]
         else:
@@ -109,11 +109,11 @@ class CronJobClient:
     ) -> int:
         """Idempotently create-or-update a single keep-alive job for ``url``.
 
-        Returns the ``jobId``. On every call we re-apply the desired
-        ``enabled=True`` + 1-minute schedule + no-failure-notifications
-        configuration, so if cron-job.org or the user ever turned it off the
-        next bot boot restores it.
-        """
+ Returns the ``jobId``. On every call we re-apply the desired
+ ``enabled=True`` + 1-minute schedule + no-failure-notifications
+ configuration, so if cron-job.org or the user ever turned it off the
+ next bot boot restores it.
+ """
         jobs = await self.list_jobs()
         # Prefer an existing job targeting the same URL.
         match = next((j for j in jobs if j.get("url") == url), None)

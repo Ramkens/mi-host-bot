@@ -228,9 +228,9 @@ def make_menu() -> Path:
         img, 110, 340,
         [
             "$ mi-host status",
-            "  > online · 24/7",
-            "  > tenants: ready",
-            "  > payments: cryptobot · usdt",
+            "> online · 24/7",
+            "> tenants: ready",
+            "> payments: cryptobot · usdt",
             "",
             "$ mi-host menu --open",
         ],
@@ -254,12 +254,12 @@ def make_order() -> Path:
     _terminal_lines(
         img, 110, 350,
         [
-            "# Шаг 1   собрать настройки",
-            "# Шаг 2   подтвердить заказ",
-            "# Шаг 3   оплата (USDT через CryptoBot)",
+            "# Шаг 1 собрать настройки",
+            "# Шаг 2 подтвердить заказ",
+            "# Шаг 3 оплата (USDT через CryptoBot)",
             "",
             "$ mi-host order --create",
-            "  > status: awaiting input",
+            "> status: awaiting input",
         ],
     )
     _badge(img, 110, HEIGHT - 140, "USDT ONLY · CRYPTO BOT")
@@ -280,11 +280,11 @@ def make_profile() -> Path:
     _terminal_lines(
         img, 110, 350,
         [
-            "user.id           : ********",
-            "subscriptions     : см. ниже",
-            "instances         : живые / уснувшие",
-            "auto-restart      : on",
-            "auto-renew        : ручной (через купон или оплата)",
+            "user.id : ********",
+            "subscriptions : см. ниже",
+            "instances : живые / уснувшие",
+            "auto-restart : on",
+            "auto-renew : ручной (через купон или оплата)",
         ],
     )
     out = ASSETS / "profile.png"
@@ -303,10 +303,10 @@ def make_notifications() -> Path:
     _terminal_lines(
         img, 110, 350,
         [
-            "[T-3 days]   подписка истекает — сохрани конфиги",
-            "[paid]       оплата прошла — инстанс запущен",
-            "[restart]    инстанс упал — перезапуск автоматом",
-            "[rotate]     обновление серверов — данные сохранены",
+            "[T-3 days] подписка истекает — сохрани конфиги",
+            "[paid] оплата прошла — инстанс запущен",
+            "[restart] инстанс упал — перезапуск автоматом",
+            "[rotate] обновление серверов — данные сохранены",
         ],
     )
     out = ASSETS / "notifications.png"

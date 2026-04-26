@@ -92,9 +92,9 @@ async def redeem(
 ) -> tuple[bool, str, Optional[Coupon]]:
     """Returns (success, message, coupon).
 
-    Does NOT commit — caller is expected to commit/rollback inside the
-    surrounding request transaction.
-    """
+ Does NOT commit — caller is expected to commit/rollback inside the
+ surrounding request transaction.
+ """
     cp = await by_code(session, code.strip().upper())
     if not cp:
         return False, "Купон не найден.", None

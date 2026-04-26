@@ -156,7 +156,7 @@ def analyze_zip(data: bytes, *, max_bytes: int = 25 * 1024 * 1024) -> AnalysisRe
 
     entrypoint = _detect_entrypoint(names)
     if not entrypoint:
-        findings.append("⚠ entrypoint не найден (+15)")
+        findings.append("entrypoint не найден (+15)")
         score[0] += 15
 
     risk = min(100, score[0])

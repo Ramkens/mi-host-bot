@@ -16,7 +16,7 @@ in ``Utils/config_loader.py::create_config_obj``):
 * ``optionxform = str`` — keys are case-sensitive
 * ``interpolation=None`` — no ``%`` parsing
 * multi-line values are supported via continuation lines indented with
-  whitespace; ConfigParser handles serialization+reparse round-trip.
+ whitespace; ConfigParser handles serialization+reparse round-trip.
 """
 from __future__ import annotations
 
@@ -43,77 +43,77 @@ _DEFAULT_USER_AGENT = (
 # without having to write a single line of config.
 
 _DEFAULT_GREETINGS_TEXT = (
-    "Мяу, $username  🐾\n"
+    "Мяу, $username \n"
     "\n"
     "Добро пожаловать в лавку!\n"
-    "Сегодня $date_text — отличный день для покупки! 😺\n"
+    "Сегодня $date_text — отличный день для покупки! \n"
     "\n"
     "Кот уже греется на солнышке и ждёт твой заказ~\n"
-    "Пиши или оплати, что нужно, и пушистый продавец мигом примчится! 🐈\n"
+    "Пиши или оплати, что нужно, и пушистый продавец мигом примчится! \n"
     "\n"
-    "⚡ Быстрая (или же автоматическая) выдача\n"
-    "🖤 Честные цены\n"
-    "🛡 Безопасная сделка\n"
+    "Быстрая (или же автоматическая) выдача\n"
+    "Честные цены\n"
+    "Безопасная сделка\n"
     "\n"
-    "Мррр... не стесняйся, кот добрый! 🐱"
+    "Мррр... не стесняйся, кот добрый! "
 )
 
 _DEFAULT_ORDER_CONFIRM_REPLY = (
-    "Мяу, $username! 🐱\n"
+    "Мяу, $username! \n"
     "\n"
-    "Надеюсь, товар понравился и кот не подвёл~ 😺\n"
+    "Надеюсь, товар понравился и кот не подвёл~ \n"
     "Если всё хорошо — оставь, пожалуйста, отзыв!\n"
     "\n"
-    "🐟 Каждый отзыв очень важен для пушистого продавца!\n"
+    "Каждый отзыв очень важен для пушистого продавца!\n"
     "\n"
-    "Спасибо, что выбрал кота! До новых встреч~ 🐾\n"
+    "Спасибо, что выбрал кота! До новых встреч~ \n"
     "$date"
 )
 
 _DEFAULT_STAR1_REPLY = (
-    "Мяу... 😿 $username\n"
+    "Мяу... $username\n"
     "\n"
     "Кот очень огорчён и просит прощения!\n"
     "Напиши пожалуйста что случилось —\n"
-    "кот разберётся и всё решит! 🐾\n"
+    "кот разберётся и всё решит! \n"
     "\n"
     "ID чата: $chat_id"
 )
 
 _DEFAULT_STAR2_REPLY = (
-    "Мяу... $username 🐾\n"
+    "Мяу... $username \n"
     "\n"
     "Кот получил отзыв и очень переживает~\n"
     "Пожалуйста, напиши в чём проблема —\n"
-    "кот всё исправит! 🐱\n"
+    "кот всё исправит! \n"
     "\n"
     "ID чата: $chat_id"
 )
 
 _DEFAULT_STAR3_REPLY = (
-    "Мяу, $username... 🐾\n"
+    "Мяу, $username... \n"
     "\n"
     "Кот немного расстроен, но не обижается~\n"
     "Напиши, что пошло не так —\n"
-    "пушистый продавец хочет стать лучше! 🐱"
+    "пушистый продавец хочет стать лучше! "
 )
 
 _DEFAULT_STAR4_REPLY = (
-    "Мррр~ $username, спасибо за отзыв! 🐾\n"
+    "Мррр~ $username, спасибо за отзыв! \n"
     "\n"
-    "Кот старался изо всех лап! 🐱\n"
+    "Кот старался изо всех лап! \n"
     "Если что-то было не так — напиши,\n"
-    "кот обязательно исправится~ 😺"
+    "кот обязательно исправится~ "
 )
 
 _DEFAULT_STAR5_REPLY = (
-    "МЯУ! 🐾 $username, спасибо огромное!\n"
+    "МЯУ! $username, спасибо огромное!\n"
     "\n"
     "5 звёздочек — кот счастлив и мурчит\n"
-    "на максимальной громкости! 😸\n"
+    "на максимальной громкости! \n"
     "\n"
     "Приходи ещё — пушистый продавец\n"
-    "всегда рад! 🐱"
+    "всегда рад! "
 )
 
 
@@ -203,7 +203,7 @@ def default_main_cfg(
             "check": "0",
         },
         "Other": {
-            "watermark": "🐦",
+            "watermark": "",
             "requestsDelay": "4",
             "language": locale,
         },
@@ -253,7 +253,7 @@ def validate_tg_token(token: str) -> bool:
 
 def validate_proxy(proxy: str) -> tuple[bool, str]:
     """Returns (ok, normalized) where normalized is the canonical form
-    Cardinal stores in ``_main.cfg`` (scheme://login:password@host:port)."""
+ Cardinal stores in ``_main.cfg`` (scheme://login:password@host:port)."""
     s = proxy.strip()
     if not s:
         return False, ""

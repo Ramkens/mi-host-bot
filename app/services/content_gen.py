@@ -3,7 +3,7 @@
 Two modes:
 * If `OPENAI_API_KEY` is set, we ask GPT for richer content.
 * Otherwise we use a solid template-based generator that rotates many
-  pre-written angles, hashtags, calls-to-action, and emojis-free copy.
+ pre-written angles, hashtags, calls-to-action, and emojis-free copy.
 """
 from __future__ import annotations
 
@@ -61,15 +61,15 @@ UPDATE_TEMPLATES = [
 ]
 
 TRIGGER_TEMPLATES = [
-    "🔥 Только сегодня: первый месяц хостинга со скидкой. Жми «Заказать» в боте.",
+    "Только сегодня: первый месяц хостинга со скидкой. Жми «Заказать» в боте.",
     "Ограниченное предложение: оплати подписку — получи +3 дня сверху по реферальной программе.",
     "Внимание: бесплатная мини-игра в боте — каждые 12 часов получай +1 день подписки.",
 ]
 
 CTA_TEMPLATES = [
-    "👉 Заходи в @{bot_username} → /start",
-    "👉 Все кнопки в @{bot_username}",
-    "👉 Открыть в боте: @{bot_username}",
+    "Заходи в @{bot_username} → /start",
+    "Все кнопки в @{bot_username}",
+    "Открыть в боте: @{bot_username}",
 ]
 
 TITLES = {

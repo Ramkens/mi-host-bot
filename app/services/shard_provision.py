@@ -18,9 +18,9 @@ async def provision_worker(
 ) -> dict:
     """Deploy a new web service on the shard's Render account.
 
-    The new service runs with MIHOST_ROLE=worker and shares this master's
-    DATABASE_URL so it can read instance assignments and write heartbeat.
-    """
+ The new service runs with MIHOST_ROLE=worker and shares this master's
+ DATABASE_URL so it can read instance assignments and write heartbeat.
+ """
     api_key = await shards_repo.get_api_key(session, shard_id)
     shard = await shards_repo.by_id(session, shard_id)
     if not api_key or not shard:

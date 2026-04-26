@@ -128,10 +128,10 @@ class ShardStatus(str, PyEnum):
 class Shard(Base):
     """A Render account (worker host) that runs tenant subprocesses.
 
-    The master service writes desired_state on Instance rows, and the worker
-    on this shard reconciles. Workers report `last_seen_at` so master can
-    detect dead shards.
-    """
+ The master service writes desired_state on Instance rows, and the worker
+ on this shard reconciles. Workers report `last_seen_at` so master can
+ detect dead shards.
+ """
 
     __tablename__ = "shards"
 
@@ -231,12 +231,12 @@ class ReferralEvent(Base):
 class Coupon(Base):
     """Multi-use code that grants a free subscription period.
 
-    Created by an admin via /create_coupon or the admin panel, redeemed by
-    a user during the buy flow as an alternative to paying. A single coupon
-    can be activated up to ``max_uses`` times; the duration granted per
-    activation is stored in ``duration_hours`` (fractional-day precision).
-    ``tier`` lets Script coupons distinguish STD vs PRO.
-    """
+ Created by an admin via /create_coupon or the admin panel, redeemed by
+ a user during the buy flow as an alternative to paying. A single coupon
+ can be activated up to ``max_uses`` times; the duration granted per
+ activation is stored in ``duration_hours`` (fractional-day precision).
+ ``tier`` lets Script coupons distinguish STD vs PRO.
+ """
 
     __tablename__ = "coupons"
 

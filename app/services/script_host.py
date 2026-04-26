@@ -5,7 +5,7 @@ Flow:
 2. CodeAnalyzer scores risk; if too high → reject
 3. AutoSetup derives build_cmd / start_cmd / required env keys
 4. We extract zip into /data/script/<instance_id>/, install deps in
-   tenant-local venv (`python -m venv .venv && pip install -r req…`)
+ tenant-local venv (`python -m venv .venv && pip install -r req…`)
 5. Spawn via supervisor
 """
 from __future__ import annotations
