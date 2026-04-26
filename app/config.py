@@ -73,7 +73,15 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     subscription_days: int = 30
     price_cardinal_rub: int = 40
-    price_script_rub: int = 50
+    price_script_rub: int = 50          # Standard script tier (130 MB)
+    price_script_pro_rub: int = 150     # PRO tier (full server, 512 MB)
+    script_std_ram_mb: int = 130
+    script_pro_ram_mb: int = 512
+    cardinal_ram_mb: int = 200
+    # Capacity of THIS service for tenants (master keeps 1 host only by default).
+    master_capacity: int = 1
+    # Days after subscription expiry before purging tenant data (with admin backup).
+    purge_grace_days: int = 5
     minigame_cooldown_hours: int = 12
     minigame_bonus_days: int = 1
     referral_bonus_days: int = 3

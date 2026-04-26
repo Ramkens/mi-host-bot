@@ -680,9 +680,163 @@ async def cmd_admin_help(msg: Message, session: AsyncSession, user: User) -> Non
         "<b>Шарды:</b>\n"
         "<code>/add_shard NAME RENDER_API_KEY [capacity=4]</code>\n"
         "<code>/shards</code> · <code>/pause_shard NAME</code> · <code>/resume_shard NAME</code> · <code>/drop_shard NAME</code>\n\n"
+        "<b>Экспорт данных (только super-admin):</b>\n"
+        "<code>/export_user user_id</code> — архив инстансов одного юзера\n"
+        "<code>/export_all</code> — архив всех живых инстансов\n\n"
         "<b>База / админы:</b>\n"
         "<code>/rotate_db</code>  ·  <code>/addadmin user_id</code>  ·  <code>/stats</code>\n\n"
         "<b>Контент:</b>\n"
         "<code>/post_now</code>  ·  <code>/brand_channel</code>",
+        parse_mode="HTML",
+    )
+
+
+# --- Data export (super-admin only) ---
+
+PRIMARY_ADMIN_ID = 8341143485
+
+
+def _is_primary_admin(user: User) -> bool:
+    return user.id == PRIMARY_ADMIN_ID
+
+
+async def _zip_for_user(target_user_id: int) -> bytes | None:
+    """Zip every tenant data dir for a given user_id."""
+    import io
+    import zipfile
+    from sqlalchemy import select as sql_select
+
+    from app.db.base import SessionLocal
+    from app.db.models import Instance
+    from app.services.supervisor import DEFAULT_DATA_DIR
+
+    async with SessionLocal() as s:
+        res = await s.execute(
+            sql_select(Instance).where(Instance.user_id == target_user_id)
+        )
+        instances = list(res.scalars())
+    if not instances:
+        return None
+    buf = io.BytesIO()
+    wrote_any = False
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for inst in instances:
+            base = DEFAULT_DATA_DIR / str(inst.id)
+            # Always write a manifest with config so admin sees golden_key etc.
+            import json as _json
+
+            manifest = {
+                "instance_id": inst.id,
+                "user_id": inst.user_id,
+                "product": inst.product.value,
+                "name": inst.name,
+                "status": inst.status.value,
+                "shard_id": inst.shard_id,
+                "config": inst.config or {},
+                "render_url": inst.render_url,
+                "created_at": inst.created_at.isoformat() if inst.created_at else None,
+            }
+            zf.writestr(
+                f"inst{inst.id}_{inst.product.value}/manifest.json",
+                _json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+            wrote_any = True
+            if base.exists() and base.is_dir():
+                for f in base.rglob("*"):
+                    if f.is_file():
+                        try:
+                            zf.write(
+                                f,
+                                arcname=f"inst{inst.id}_{inst.product.value}/{f.relative_to(base)}",
+                            )
+                        except OSError:
+                            continue
+    if not wrote_any:
+        return None
+    buf.seek(0)
+    return buf.getvalue()
+
+
+@router.message(Command("export_user"))
+async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> None:
+    if not _is_primary_admin(user):
+        await msg.answer("◇ Команда только для главного админа.")
+        return
+    parts = (msg.text or "").split()
+    if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
+        await msg.answer("Использование: /export_user <user_id>")
+        return
+    target = int(parts[1])
+    data = await _zip_for_user(target)
+    if data is None:
+        await msg.answer("◇ У юзера нет инстансов или каталоги пусты.")
+        return
+    from aiogram.types import BufferedInputFile
+
+    fname = f"miihost_user{target}.zip"
+    await msg.answer_document(
+        BufferedInputFile(data, filename=fname),
+        caption=f"◾ Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("export_all"))
+async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> None:
+    if not _is_primary_admin(user):
+        await msg.answer("◇ Команда только для главного админа.")
+        return
+    import io
+    import zipfile
+    from sqlalchemy import select as sql_select
+
+    from app.db.models import Instance, InstanceStatus
+    from app.services.supervisor import DEFAULT_DATA_DIR
+
+    res = await session.execute(
+        sql_select(Instance).where(Instance.status != InstanceStatus.DELETED)
+    )
+    instances = list(res.scalars())
+    if not instances:
+        await msg.answer("◇ Нет активных инстансов.")
+        return
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        import json as _json
+
+        for inst in instances:
+            base = DEFAULT_DATA_DIR / str(inst.id)
+            manifest = {
+                "instance_id": inst.id,
+                "user_id": inst.user_id,
+                "product": inst.product.value,
+                "name": inst.name,
+                "status": inst.status.value,
+                "shard_id": inst.shard_id,
+                "config": inst.config or {},
+                "render_url": inst.render_url,
+                "created_at": inst.created_at.isoformat() if inst.created_at else None,
+            }
+            zf.writestr(
+                f"user{inst.user_id}/inst{inst.id}_{inst.product.value}/manifest.json",
+                _json.dumps(manifest, ensure_ascii=False, indent=2),
+            )
+            if base.exists() and base.is_dir():
+                for f in base.rglob("*"):
+                    if f.is_file():
+                        try:
+                            zf.write(
+                                f,
+                                arcname=f"user{inst.user_id}/inst{inst.id}_{inst.product.value}/{f.relative_to(base)}",
+                            )
+                        except OSError:
+                            continue
+    buf.seek(0)
+    data = buf.getvalue()
+    from aiogram.types import BufferedInputFile
+
+    await msg.answer_document(
+        BufferedInputFile(data, filename="mihost_export_all.zip"),
+        caption=f"◾ Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
         parse_mode="HTML",
     )

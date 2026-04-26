@@ -21,6 +21,7 @@ from app.repos import subscriptions as subs_repo
 from app.repos import users as users_repo
 from app.services.admin import is_admin
 from app.services.images import ASSETS, generate_all
+from app.services.slots import free_cardinal_slots
 from app.utils.time import fmt_msk, now_utc
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,13 @@ def _ensure_assets() -> Path:
 
 async def _greeting_text(session: AsyncSession, user: User) -> str:
     subs = await subs_repo.list_for_user(session, user.id)
+    free_card = await free_cardinal_slots(session)
     lines = [
         "<b>▰▰▰  MI HOST  ▰▰▰</b>",
         "<i>хостинг FunPay Cardinal · 40 ₽/мес</i>",
-        "<i>хостинг кастом-скриптов · 50 ₽/мес</i>",
+        "<i>хостинг кастом-скриптов · 50 ₽ (130 MB) / 150 ₽ (512 MB)</i>",
+        "",
+        f"◾ Свободных серверов: <b>{free_card}</b> (под Cardinal)",
         "",
         f"◾ <b>{user.first_name or 'юзер'}</b>  ·  id <code>{user.id}</code>",
         f"◾ lvl {user.level}  ·  xp {user.xp}  ·  coins {user.coins}",
