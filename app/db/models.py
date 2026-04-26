@@ -229,10 +229,13 @@ class ReferralEvent(Base):
 
 
 class Coupon(Base):
-    """Single-use code that grants a free subscription period.
+    """Multi-use code that grants a free subscription period.
 
-    Created by an admin via /create_coupon, redeemed by a user during the
-    buy flow as an alternative to paying.
+    Created by an admin via /create_coupon or the admin panel, redeemed by
+    a user during the buy flow as an alternative to paying. A single coupon
+    can be activated up to ``max_uses`` times; the duration granted per
+    activation is stored in ``duration_hours`` (fractional-day precision).
+    ``tier`` lets Script coupons distinguish STD vs PRO.
     """
 
     __tablename__ = "coupons"
@@ -240,8 +243,13 @@ class Coupon(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     product: Mapped[ProductKind] = mapped_column(Enum(ProductKind, name="product_kind"))
-    days: Mapped[int] = mapped_column(Integer, default=30)
+    tier: Mapped[str] = mapped_column(String(16), default="std")
+    days: Mapped[int] = mapped_column(Integer, default=30)  # legacy
+    duration_hours: Mapped[int] = mapped_column(Integer, default=30 * 24)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    uses_count: Mapped[int] = mapped_column(Integer, default=0)
     issued_by: Mapped[Optional[int]] = mapped_column(BigInteger)
+    # Kept for backward compatibility / reporting: last redeemer info.
     used_by: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
     used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

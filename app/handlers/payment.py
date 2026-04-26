@@ -11,7 +11,7 @@ from io import BytesIO
 from typing import Optional
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Document, FSInputFile, Message
@@ -43,6 +43,7 @@ class BuyFSM(StatesGroup):
     awaiting_golden_key = State()
     awaiting_zip = State()
     awaiting_coupon = State()
+    awaiting_any_coupon = State()  # /coupon — product inferred from the code
 
 
 # --- Step 1: choose product menu ---
@@ -56,11 +57,11 @@ async def cb_buy_menu(cb: CallbackQuery, state: FSMContext) -> None:
         generate_all()
     text = (
         "<b>Выбери что хостить</b>\n\n"
-        f"◾ <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
+        f"💠 <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
         "    автозапуск, авторестарт, смена golden_key прямо в боте\n\n"
-        f"◾ <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
+        f"💠 <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
         "    .zip с твоим Python-проектом, автоанализ + автодеплой\n\n"
-        "◇ Сначала соберём настройки, потом выставлю счёт."
+        "🔹 Сначала соберём настройки, потом выставлю счёт."
     )
     if cb.message:
         try:
@@ -179,9 +180,9 @@ async def _show_summary(
     price = _price_for(product, tier)
     if product == ProductKind.CARDINAL:
         details = (
-            f"◾ Cardinal-инстанс\n"
-            f"◾ golden_key: <code>***{data['golden_key'][-4:]}</code>\n"
-            f"◾ Срок: 30 дней\n"
+            f"💠 Cardinal-инстанс\n"
+            f"💠 golden_key: <code>***{data['golden_key'][-4:]}</code>\n"
+            f"💠 Срок: 30 дней\n"
         )
     else:
         size_kb = data.get("zip_size", 0) // 1024
@@ -190,16 +191,16 @@ async def _show_summary(
             else settings.script_std_ram_mb
         )
         details = (
-            f"◾ Кастом-скрипт · {tier.upper()} · {ram} MB\n"
-            f"◾ Архив: <code>{data['zip_name']}</code> · {size_kb} KB\n"
-            f"◾ Срок: 30 дней\n"
+            f"💠 Кастом-скрипт · {tier.upper()} · {ram} MB\n"
+            f"💠 Архив: <code>{data['zip_name']}</code> · {size_kb} KB\n"
+            f"💠 Срок: 30 дней\n"
         )
     text = (
         "<b>Проверь заказ</b>\n\n"
         f"{details}\n"
         f"<b>К оплате: {price} ₽</b>\n\n"
         "Оплата только в <b>USDT через CryptoBot</b>.\n"
-        "Хочешь другой криптой → жми «◇ Другая крипта → саппорт» на следующем экране, "
+        "Хочешь другой криптой → жми «🔹 Другая крипта → саппорт» на следующем экране, "
         "или сразу пиши в <a href=\"tg://user?id={admin}\">саппорт</a>.\n\n"
         "Есть бесплатный купон? Жми «У меня купон»."
     ).format(admin=settings.admin_ids_list[0] if settings.admin_ids_list else 0)
@@ -267,10 +268,10 @@ async def cb_buy_invoice(
 
     text = (
         "<b>Счёт</b>\n\n"
-        f"◾ Продукт: <b>{product.value}</b>\n"
-        f"◾ Сумма: <b>{price} ₽</b> ≈ {invoice.get('amount')} {invoice.get('asset')}\n\n"
-        "◇ Оплата только в USDT через @CryptoBot.\n"
-        "◇ Другая крипта (TON/BTC/ETH/…) → жми кнопку «◇ Другая крипта → саппорт».\n\n"
+        f"💠 Продукт: <b>{product.value}</b>\n"
+        f"💠 Сумма: <b>{price} ₽</b> ≈ {invoice.get('amount')} {invoice.get('asset')}\n\n"
+        "🔹 Оплата только в USDT через @CryptoBot.\n"
+        "🔹 Другая крипта (TON/BTC/ETH/…) → жми кнопку «🔹 Другая крипта → саппорт».\n\n"
         "После оплаты — нажми «Я оплатил» или дождись авто-проверки."
     )
     pay_url = invoice.get("pay_url") or invoice.get("bot_invoice_url")
@@ -304,6 +305,37 @@ async def cb_buy_coupon(
     await cb.answer()
 
 
+@router.message(Command("coupon"))
+async def cmd_coupon(
+    msg: Message, command: CommandObject, state: FSMContext,
+    session: AsyncSession, user: User,
+) -> None:
+    """/coupon <CODE> — redeem a coupon without going through the buy flow."""
+    arg = (command.args or "").strip().upper() if command else ""
+    if arg:
+        await _redeem_coupon_and_provision(msg, session, user, arg, None, {}, state)
+        return
+    await state.set_state(BuyFSM.awaiting_any_coupon)
+    await msg.answer(
+        "🎟️ Пришли код купона одним сообщением (формат <code>MH-XXXXXXXX</code>).\n"
+        "/cancel — отмена.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(BuyFSM.awaiting_any_coupon)
+async def receive_any_coupon(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    text = (msg.text or "").strip()
+    if text == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    code = text.upper()
+    await _redeem_coupon_and_provision(msg, session, user, code, None, {}, state)
+
+
 @router.message(BuyFSM.awaiting_coupon)
 async def receive_coupon(
     msg: Message, state: FSMContext, session: AsyncSession, user: User
@@ -311,46 +343,116 @@ async def receive_coupon(
     code = (msg.text or "").strip().upper()
     data = await state.get_data()
     product_str = data.get("product")
-    if not product_str:
-        await msg.answer("Сначала выбери продукт через /menu → Купить.")
-        await state.clear()
-        return
-    product = ProductKind(product_str)
+    # Allow coupon redemption even if user never picked a product (e.g. admin
+    # handed them a raw coupon code): we'll infer product from the coupon.
+    await _redeem_coupon_and_provision(
+        msg, session, user, code, product_str, data, state
+    )
+
+
+async def _redeem_coupon_and_provision(
+    msg: Message,
+    session: AsyncSession,
+    user: User,
+    code: str,
+    product_str: str | None,
+    data: dict,
+    state: FSMContext,
+) -> None:
     ok, message, coupon = await coupons_repo.redeem(session, code, user.id)
     if not ok or not coupon:
-        await msg.answer(f"◇ {message}")
+        await msg.answer(f"🔹 {message}")
         return
-    if coupon.product != product:
-        await msg.answer(
-            f"◇ Купон для другого продукта ({coupon.product.value}). "
-            "Запроси нужный купон у админа.",
-        )
-        return
-    # Activate as if paid; provision the instance using the saved settings.
-    await subs_repo.extend(session, user.id, product, coupon.days)
+    if product_str:
+        try:
+            picked = ProductKind(product_str)
+        except ValueError:
+            picked = coupon.product
+        if coupon.product != picked:
+            await msg.answer(
+                f"🔹 Купон на <b>{coupon.product.value}</b>, а ты покупал "
+                f"<b>{picked.value}</b>. Начни заново через /menu → 💎 Купить.",
+                parse_mode="HTML",
+            )
+            return
+    product = coupon.product
+    tier = coupon.tier or "std"
+    hours = coupons_repo.duration_hours(coupon)
+    await subs_repo.extend_hours(session, user.id, product, hours=hours)
     await users_repo.add_xp(session, user.id, 10)
     await logs_repo.write(
         session,
         kind="coupon.redeemed",
-        message=f"{code} · +{coupon.days}d {product.value}",
+        message=f"{code} · +{hours}h {product.value}{' PRO' if tier == 'pro' else ''}",
         user_id=user.id,
+        meta={"code": code, "tier": tier, "hours": hours},
     )
-    await session.commit()
+    # Always ensure a placeholder instance row exists so the user sees their
+    # server in "Мои серверы" even if they haven't uploaded golden_key / zip.
+    data = {**(data or {}), "tier": tier}
+    label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
+    span = f"{hours // 24} дн" if hours % 24 == 0 else f"{hours} ч"
     await msg.answer(
-        f"▣ Купон применён: +{coupon.days} дней <b>{product.value}</b>.",
+        f"✨ Купон применён: +{span} <b>{label}</b>.",
         parse_mode="HTML",
     )
-    # Provision the instance immediately.
+    # Try to provision from FSM-collected settings (golden_key / zip); if
+    # none available, fall through to a placeholder instance row.
+    provisioned = False
     try:
-        await _provision_instance(session, user.id, product, data)
-        await session.commit()
+        if (product == ProductKind.CARDINAL and data.get("golden_key")) or (
+            product == ProductKind.SCRIPT and data.get("zip_bytes")
+        ):
+            await _provision_instance(session, user.id, product, data)
+            provisioned = True
     except Exception as exc:  # noqa: BLE001
         logger.exception("provision after coupon failed")
         await msg.answer(
-            f"◇ Подписка активна, но запуск инстанса упал: {exc}\n"
+            f"🔹 Подписка активна, но запуск сервера упал: {exc}\n"
             "Напиши /support, поможем.",
         )
+    if not provisioned:
+        await _ensure_placeholder_instance(session, user.id, product, tier)
+        await msg.answer(
+            "🖥️ Сервер добавлен в «Мои серверы» в статусе <b>PENDING</b>.\n"
+            "Зайди: /menu → 🖥️ Мои серверы → ⚙️ Настроить — и "
+            f"{'пришли golden_key' if product == ProductKind.CARDINAL else 'загрузи .zip'}, "
+            "сервер запустится автоматически.",
+            parse_mode="HTML",
+        )
+    await session.commit()
     await state.clear()
+
+
+async def _ensure_placeholder_instance(
+    session: AsyncSession,
+    user_id: int,
+    product: ProductKind,
+    tier: str = "std",
+) -> None:
+    """Ensure the user has at least one Instance row for this product so the
+    server is visible in the 'Мои серверы' screen even before they upload
+    their config. Idempotent."""
+    from app.db.models import InstanceStatus
+
+    existing = await inst_repo.list_for_user(session, user_id, product)
+    if existing:
+        inst = existing[0]
+        new_cfg = dict(inst.config or {})
+        new_cfg.setdefault("tier", tier)
+        inst.config = new_cfg
+        return
+    inst = await inst_repo.create(
+        session,
+        user_id=user_id,
+        product=product,
+        name=f"{product.value}-{user_id}",
+        config={"tier": tier},
+    )
+    inst.status = InstanceStatus.PENDING
+    inst.desired_state = "live"
+    inst.actual_state = "stopped"
+    await session.flush()
 
 
 # --- Step 4: pay-check (manual + webhook) ---
@@ -399,7 +501,7 @@ async def cb_pay_check(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     await session.commit()
 
     await cb.message.answer(
-        f"▣ Оплата подтверждена. Подписка <b>{payment.product.value}</b> "
+        f"✨ Оплата подтверждена. Подписка <b>{payment.product.value}</b> "
         f"продлена на {settings.subscription_days} дней.",
         parse_mode="HTML",
         reply_markup=back_to_menu(),
