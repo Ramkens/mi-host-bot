@@ -209,7 +209,7 @@ async def rotate_now(bot, *, force: bool = False) -> dict:
     # Step 3 — notify users that maintenance is starting.
     await _notify_active(
         bot,
-        "🔧 <b>Обновление серверов</b>\n\n"
+        "⚙ <b>Обновление серверов</b>\n\n"
         "Месяц хоста прошёл, переносим вас на новый сервер. "
         "Это займёт несколько минут — инстансы могут быть недоступны. "
         "Как только закончим, я напишу.",
@@ -227,7 +227,7 @@ async def rotate_now(bot, *, force: bool = False) -> dict:
         logger.exception("db copy failed")
         await _notify_active(
             bot,
-            "⚠️ Сбой обновления серверов. Попробуем снова автоматически. "
+            "⚠ Сбой обновления серверов. Попробуем снова автоматически. "
             "Извините за неудобства.",
         )
         return {"ok": False, "reason": f"copy failed: {exc}"}
@@ -291,6 +291,6 @@ async def announce_done_if_pending(bot) -> None:
         await s.commit()
     await _notify_active(
         bot,
-        "✅ <b>Готово</b>\n\n"
+        "✓ <b>Готово</b>\n\n"
         "Серверы обновлены, ваш инстанс снова работает. Спасибо за терпение.",
     )

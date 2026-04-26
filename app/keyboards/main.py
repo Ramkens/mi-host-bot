@@ -13,10 +13,10 @@ def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(text="🖤 Купить хостинг", callback_data="buy:menu"),
-            InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+            InlineKeyboardButton(text="⎔ Профиль", callback_data="profile"),
         ],
         [
-            InlineKeyboardButton(text="🖥️ Мои серверы", callback_data="instances"),
+            InlineKeyboardButton(text="▣ Мои серверы", callback_data="instances"),
             InlineKeyboardButton(text="🛟 Поддержка", callback_data="support"),
         ],
     ]
@@ -60,7 +60,7 @@ def buy_menu() -> InlineKeyboardMarkup:
 def buy_confirm_tier(product: str, tier: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💳 К оплате", callback_data=f"buy:invoice:{product}:{tier}")],
+            [InlineKeyboardButton(text="▭ К оплате", callback_data=f"buy:invoice:{product}:{tier}")],
             [InlineKeyboardButton(text="🎟️ У меня купон", callback_data=f"buy:coupon:{product}:{tier}")],
             [InlineKeyboardButton(text="✖️ Отмена", callback_data="menu")],
         ]
@@ -70,8 +70,8 @@ def buy_confirm_tier(product: str, tier: str) -> InlineKeyboardMarkup:
 def pay_buttons(pay_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить в CryptoBot (USDT)", url=pay_url)],
-            [InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data="pay:check")],
+            [InlineKeyboardButton(text="▭ Оплатить в CryptoBot (USDT)", url=pay_url)],
+            [InlineKeyboardButton(text="✓ Я оплатил — проверить", callback_data="pay:check")],
             [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
         ]
     )
@@ -82,7 +82,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats"),
-                InlineKeyboardButton(text="👤 Юзер", callback_data="admin:user"),
+                InlineKeyboardButton(text="⎔ Юзер", callback_data="admin:user"),
             ],
             [
                 InlineKeyboardButton(text="🖤 Подписки", callback_data="admin:subs"),
@@ -90,10 +90,10 @@ def admin_menu() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="🧩 Шарды", callback_data="admin:shards"),
-                InlineKeyboardButton(text="📦 Экспорт", callback_data="admin:export"),
+                InlineKeyboardButton(text="❒ Экспорт", callback_data="admin:export"),
             ],
             [
-                InlineKeyboardButton(text="📣 Рассылка", callback_data="admin:broadcast"),
+                InlineKeyboardButton(text="🖤 Рассылка", callback_data="admin:broadcast"),
                 InlineKeyboardButton(text="🛡️ Доб. админа", callback_data="admin:add_admin"),
             ],
             [
@@ -115,8 +115,8 @@ def admin_subs_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🖤 Выдать подписку", callback_data="admin:sub:grant")],
-            [InlineKeyboardButton(text="➕ Добавить дни", callback_data="admin:sub:add")],
-            [InlineKeyboardButton(text="➖ Снять дни", callback_data="admin:sub:remove")],
+            [InlineKeyboardButton(text="+ Добавить дни", callback_data="admin:sub:add")],
+            [InlineKeyboardButton(text="− Снять дни", callback_data="admin:sub:remove")],
             [InlineKeyboardButton(text="🚫 Отозвать подписку", callback_data="admin:sub:revoke")],
             [InlineKeyboardButton(text="◀️ В админку", callback_data="admin")],
         ]
@@ -181,9 +181,9 @@ def admin_pick_days(action: str, product: str, tier: str = "std") -> InlineKeybo
 def admin_coupons_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Создать купон", callback_data="admin:coupon:new")],
-            [InlineKeyboardButton(text="📋 Список купонов", callback_data="admin:coupon:list")],
-            [InlineKeyboardButton(text="🗑 Удалить купон", callback_data="admin:coupon:del")],
+            [InlineKeyboardButton(text="+ Создать купон", callback_data="admin:coupon:new")],
+            [InlineKeyboardButton(text="▤ Список купонов", callback_data="admin:coupon:list")],
+            [InlineKeyboardButton(text="✗ Удалить купон", callback_data="admin:coupon:del")],
             [InlineKeyboardButton(text="◀️ В админку", callback_data="admin")],
         ]
     )
@@ -219,23 +219,23 @@ def admin_coupon_pick_product() -> InlineKeyboardMarkup:
 def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
     rows = [
         [
-            InlineKeyboardButton(text="▶️ Старт", callback_data=f"inst:start:{instance_id}"),
-            InlineKeyboardButton(text="⏹️ Стоп", callback_data=f"inst:stop:{instance_id}"),
+            InlineKeyboardButton(text="▶ Старт", callback_data=f"inst:start:{instance_id}"),
+            InlineKeyboardButton(text="■ Стоп", callback_data=f"inst:stop:{instance_id}"),
         ],
         [
-            InlineKeyboardButton(text="🔄 Рестарт", callback_data=f"inst:restart:{instance_id}"),
-            InlineKeyboardButton(text="📜 Логи", callback_data=f"inst:logs:{instance_id}"),
+            InlineKeyboardButton(text="↻ Рестарт", callback_data=f"inst:restart:{instance_id}"),
+            InlineKeyboardButton(text="≣ Логи", callback_data=f"inst:logs:{instance_id}"),
         ],
         [
-            InlineKeyboardButton(text="📡 Статус", callback_data=f"inst:status:{instance_id}"),
-            InlineKeyboardButton(text="⚙️ Настроить", callback_data=f"inst:setup:{instance_id}"),
+            InlineKeyboardButton(text="⟳ Статус", callback_data=f"inst:status:{instance_id}"),
+            InlineKeyboardButton(text="⚙ Настроить", callback_data=f"inst:setup:{instance_id}"),
         ],
     ]
     if product == ProductKind.CARDINAL.value:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="🔑 Сменить golden_key",
+                    text="⌇ Сменить golden_key",
                     callback_data=f"inst:setkey:{instance_id}",
                 ),
             ]
@@ -243,7 +243,7 @@ def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="📄 Залить _main.cfg",
+                    text="▤ Залить _main.cfg",
                     callback_data=f"inst:cfg:main:{instance_id}",
                 ),
             ]
@@ -251,11 +251,11 @@ def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="📄 auto_response.cfg",
+                    text="▤ auto_response.cfg",
                     callback_data=f"inst:cfg:resp:{instance_id}",
                 ),
                 InlineKeyboardButton(
-                    text="📄 auto_delivery.cfg",
+                    text="▤ auto_delivery.cfg",
                     callback_data=f"inst:cfg:deliv:{instance_id}",
                 ),
             ]
@@ -263,7 +263,7 @@ def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="👀 Текущий _main.cfg",
+                    text="◉ Текущий _main.cfg",
                     callback_data=f"inst:cfg:show:{instance_id}",
                 ),
             ]
@@ -275,10 +275,10 @@ def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
 def admin_shards_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Список", callback_data="admin:shard:list")],
-            [InlineKeyboardButton(text="➕ Добавить", callback_data="admin:shard:add")],
+            [InlineKeyboardButton(text="▤ Список", callback_data="admin:shard:list")],
+            [InlineKeyboardButton(text="+ Добавить", callback_data="admin:shard:add")],
             [InlineKeyboardButton(text="⏯️ Пауза/возобновить", callback_data="admin:shard:toggle")],
-            [InlineKeyboardButton(text="🗑 Удалить", callback_data="admin:shard:drop")],
+            [InlineKeyboardButton(text="✗ Удалить", callback_data="admin:shard:drop")],
             [InlineKeyboardButton(text="◀️ В админку", callback_data="admin")],
         ]
     )
@@ -287,8 +287,8 @@ def admin_shards_menu() -> InlineKeyboardMarkup:
 def admin_export_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👤 Экспорт юзера", callback_data="admin:export:user")],
-            [InlineKeyboardButton(text="📦 Экспорт всех", callback_data="admin:export:all")],
+            [InlineKeyboardButton(text="⎔ Экспорт юзера", callback_data="admin:export:user")],
+            [InlineKeyboardButton(text="❒ Экспорт всех", callback_data="admin:export:all")],
             [InlineKeyboardButton(text="◀️ В админку", callback_data="admin")],
         ]
     )

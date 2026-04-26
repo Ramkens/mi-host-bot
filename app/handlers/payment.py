@@ -14,7 +14,14 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Document, FSInputFile, Message
+from aiogram.types import (
+    CallbackQuery,
+    Document,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -42,6 +49,8 @@ router = Router(name="payment")
 class BuyFSM(StatesGroup):
     awaiting_golden_key = State()
     awaiting_tg_token = State()
+    awaiting_pw_choice = State()
+    awaiting_pw_custom = State()
     awaiting_zip = State()
     awaiting_coupon = State()
     awaiting_any_coupon = State()  # /coupon — product inferred from the code
@@ -129,7 +138,7 @@ async def receive_golden_key(
     key = (msg.text or "").strip()
     if len(key) != 32:
         await msg.answer(
-            "❌ golden_key должен быть ровно 32 символа. Скопируй cookie "
+            "✗ golden_key должен быть ровно 32 символа. Скопируй cookie "
             "<code>golden_key</code> с funpay.com полностью и пришли ещё раз.",
             parse_mode="HTML",
         )
@@ -153,27 +162,100 @@ async def receive_golden_key(
 async def receive_tg_token(
     msg: Message, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
-    from app.services.cardinal_config import generate_password, hash_password, validate_tg_token
+    from app.services.cardinal_config import validate_tg_token
 
     raw = (msg.text or "").strip()
     if not validate_tg_token(raw):
         await msg.answer(
-            "❌ Токен не тот. Формат: <code>123456:ABC-DEF...</code>",
+            "✗ Токен не подходит. Формат: <code>123456:ABC-DEF...</code>\n"
+            "Проверь, что скопировал его целиком из <code>@BotFather</code>.",
             parse_mode="HTML",
         )
         return
-    # Auto-generate Cardinal admin password so the user doesn't have to pick one.
-    tg_password = generate_password()
-    await state.update_data(
-        tg_token=raw,
-        tg_pw_plain=tg_password,
-        tg_pw_hash=hash_password(tg_password),
-    )
+    await state.update_data(tg_token=raw)
     try:
         await msg.delete()
     except Exception:  # noqa: BLE001
         pass
-    await _show_summary(msg, state, session, user, ProductKind.CARDINAL)
+    await state.set_state(BuyFSM.awaiting_pw_choice)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="↻ Сгенерировать надёжный пароль",
+                    callback_data="buy:pw:gen",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✎ Придумаю свой",
+                    callback_data="buy:pw:custom",
+                )
+            ],
+        ]
+    )
+    await msg.answer(
+        "<b>🖤 Cardinal · пароль</b>\n\n"
+        "Этим паролем ты будешь входить в свой Telegram-бот Cardinal. "
+        "Можно сгенерировать автоматически или задать самому.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(BuyFSM.awaiting_pw_choice, F.data == "buy:pw:gen")
+async def cb_pw_gen(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import generate_password, hash_password
+
+    pw = generate_password()
+    await state.update_data(tg_pw_plain=pw, tg_pw_hash=hash_password(pw))
+    if cb.message:
+        try:
+            await cb.message.delete()
+        except Exception:  # noqa: BLE001
+            pass
+        data = await state.get_data()
+        product = ProductKind(data.get("product", "cardinal"))
+        await _show_summary(cb.message, state, session, user, product)
+    await cb.answer()
+
+
+@router.callback_query(BuyFSM.awaiting_pw_choice, F.data == "buy:pw:custom")
+async def cb_pw_custom(
+    cb: CallbackQuery, state: FSMContext
+) -> None:
+    await state.set_state(BuyFSM.awaiting_pw_custom)
+    if cb.message:
+        await cb.message.answer(
+            "✎ Пришли пароль одним сообщением.\n"
+            "<i>Требования:</i> минимум 8 символов, заглавные + строчные буквы "
+            "и хотя бы одна цифра.",
+            parse_mode="HTML",
+        )
+    await cb.answer()
+
+
+@router.message(BuyFSM.awaiting_pw_custom)
+async def receive_pw_custom(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import hash_password, validate_password
+
+    pw = (msg.text or "").strip()
+    ok, err = validate_password(pw)
+    if not ok:
+        await msg.answer(f"✗ {err}\nПопробуй ещё раз.")
+        return
+    await state.update_data(tg_pw_plain=pw, tg_pw_hash=hash_password(pw))
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    data = await state.get_data()
+    product = ProductKind(data.get("product", "cardinal"))
+    await _show_summary(msg, state, session, user, product)
 
 
 @router.message(BuyFSM.awaiting_zip, F.document)
@@ -434,35 +516,54 @@ async def _redeem_coupon_and_provision(
     )
     # Always ensure a placeholder instance row exists so the user sees their
     # server in "Мои серверы" even if they haven't uploaded golden_key / zip.
-    data = {**(data or {}), "tier": tier}
+    # Inherit any settings the user already entered in the current buy flow
+    # (golden_key / tg_token / password / zip) so we never re-ask for them.
+    fsm_data = await state.get_data()
+    merged_data: dict = {**fsm_data, **(data or {}), "tier": tier}
     label = f"{product.value}{' PRO' if tier == 'pro' else ''}"
     span = f"{hours // 24} дн" if hours % 24 == 0 else f"{hours} ч"
-    await msg.answer(
-        f"✓ Купон применён: +{span} <b>{label}</b>.",
-        parse_mode="HTML",
-    )
     # Try to provision from FSM-collected settings (golden_key / zip); if
     # none available, fall through to a placeholder instance row.
     provisioned = False
     try:
-        if (product == ProductKind.CARDINAL and data.get("golden_key")) or (
-            product == ProductKind.SCRIPT and data.get("zip_bytes")
+        if (product == ProductKind.CARDINAL and merged_data.get("golden_key")) or (
+            product == ProductKind.SCRIPT and merged_data.get("zip_bytes")
         ):
-            await _provision_instance(session, user.id, product, data)
+            await _provision_instance(session, user.id, product, merged_data)
             provisioned = True
     except Exception as exc:  # noqa: BLE001
         logger.exception("provision after coupon failed")
         await msg.answer(
             f"▫️ Подписка активна, но запуск сервера упал: {exc}\n"
-            "Напиши /support, поможем.",
+            "Напиши /support — поможем.",
         )
-    if not provisioned:
-        await _ensure_placeholder_instance(session, user.id, product, tier)
+    if provisioned:
+        pw_plain = merged_data.get("tg_pw_plain", "")
+        pw_line = (
+            f"\n▪️ Пароль от Telegram-бота Cardinal: <code>{pw_plain}</code>\n"
+            "<i>Сохрани — показываю один раз.</i>"
+            if product == ProductKind.CARDINAL and pw_plain
+            else ""
+        )
         await msg.answer(
-            "🖥️ Сервер добавлен в «Мои серверы» в статусе <b>PENDING</b>.\n"
-            "Зайди: /menu → 🖥️ Мои серверы → ⚙️ Настроить — и "
-            f"{'пришли golden_key' if product == ProductKind.CARDINAL else 'загрузи .zip'}, "
-            "сервер запустится автоматически.",
+            f"<b>🖤 Спасибо!</b>\n\n"
+            f"Купон <code>{code}</code> активирован: +{span} <b>{label}</b>."
+            f"{pw_line}\n\n"
+            f"{_kickoff_hint(product)}",
+            parse_mode="HTML",
+        )
+    else:
+        await _ensure_placeholder_instance(session, user.id, product, tier)
+        cont_hint = (
+            "пришли golden_key"
+            if product == ProductKind.CARDINAL
+            else "загрузи .zip"
+        )
+        await msg.answer(
+            f"<b>🖤 Спасибо!</b>\n\n"
+            f"Купон <code>{code}</code> активирован: +{span} <b>{label}</b>.\n\n"
+            f"Чтобы сервер запустился, зайди /menu → ▣ Мои серверы → ⚙ Настроить "
+            f"и {cont_hint}. Всё запустится автоматически за ~5 минут.",
             parse_mode="HTML",
         )
     await session.commit()
@@ -546,13 +647,29 @@ async def cb_pay_check(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     await session.commit()
 
     await cb.message.answer(
-        f"✓ Оплата подтверждена. Подписка <b>{payment.product.value}</b> "
-        f"продлена на {settings.subscription_days} дней.",
+        f"<b>🖤 Спасибо за покупку!</b>\n\n"
+        f"Подписка <b>{payment.product.value}</b> активна на "
+        f"{settings.subscription_days} дней.\n\n"
+        f"{_kickoff_hint(payment.product)}",
         parse_mode="HTML",
         reply_markup=back_to_menu(),
     )
     await state.clear()
     await cb.answer()
+
+
+def _kickoff_hint(product: ProductKind) -> str:
+    """Standard message shown after payment/coupon success."""
+    if product == ProductKind.CARDINAL:
+        return (
+            "▪️ Бот Cardinal запустится в течение ~5 минут.\n"
+            "Как только будет готов — напиши своему Telegram-боту "
+            "<code>/start</code> и залогинься паролем, который я показал выше."
+        )
+    return (
+        "▪️ Твой скрипт запустится в течение ~5 минут.\n"
+        "Следить за состоянием: /menu → ▣ Мои серверы."
+    )
 
 
 # --- Provisioning helpers ---

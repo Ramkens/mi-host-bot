@@ -67,7 +67,7 @@ async def _ensure_placeholder_instance(
 
     When an admin grants a subscription (or a user redeems a coupon without
     going through the buy flow), we want the user to see a server row in
-    'Мои серверы' with a "⚙️ Настроить" action so they can supply the
+    'Мои серверы' with a "⚙ Настроить" action so they can supply the
     missing configuration. The instance stays PENDING until they do.
     """
     from app.db.models import InstanceStatus
@@ -340,15 +340,15 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     try:
         owner_id = await rc.autodetect_owner()
     except Exception as exc:  # noqa: BLE001
-        await msg.answer(f"❌ API key недействителен: <code>{exc}</code>", parse_mode="HTML")
+        await msg.answer(f"✗ API key недействителен: <code>{exc}</code>", parse_mode="HTML")
         return
     if not owner_id:
-        await msg.answer("❌ Не нашёл owner у этого API key.")
+        await msg.answer("✗ Не нашёл owner у этого API key.")
         return
 
     existing = await shards_repo.by_name(session, name)
     if existing:
-        await msg.answer(f"❌ Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
+        await msg.answer(f"✗ Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
         return
 
     shard = await shards_repo.create(
@@ -361,7 +361,7 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     await session.commit()
 
     await msg.answer(
-        f"✅ Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
+        f"✓ Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
         f"Деплою воркер на этот аккаунт…",
         parse_mode="HTML",
     )
@@ -375,14 +375,14 @@ async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None
     await session.commit()
     if result.get("ok"):
         await msg.answer(
-            f"🚀 Воркер деплоится: <code>{result.get('service_id')}</code>\n"
+            f"⌁ Воркер деплоится: <code>{result.get('service_id')}</code>\n"
             f"URL: {result.get('service_url')}\n\n"
             "Жди ~3 минуты до первого heartbeat.",
             parse_mode="HTML",
         )
     else:
         await msg.answer(
-            f"⚠️ Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
+            f"⚠ Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
             parse_mode="HTML",
         )
 
@@ -403,7 +403,7 @@ async def cmd_shards(msg: Message, session: AsyncSession, user: User) -> None:
         load = occ.get(sh.id, 0)
         alive = shards_repo.is_alive(sh)
         seen = "никогда" if not sh.last_seen_at else sh.last_seen_at.strftime("%Y-%m-%d %H:%M")
-        marker = "🟢" if alive else "🔴"
+        marker = "●" if alive else "○"
         lines.append(
             f"{marker} <b>{sh.name}</b> · id={sh.id} · {load}/{sh.capacity} · {sh.status.value}\n"
             f"    service: <code>{sh.service_id or '-'}</code>\n"
@@ -540,7 +540,7 @@ async def cmd_create_coupon(msg: Message, session: AsyncSession, user: User) -> 
         "<b>🎟️ Купон создан</b>\n\n"
         f"🖤 Код: <code>{cp.code}</code>\n"
         f"▪️ Продукт: <b>{label}</b>\n"
-        f"⏱ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
+        f"◷ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
         f"🔢 Активаций: <b>{max_uses}</b>\n"
         f"⌛ Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)\n\n"
         "Юзер вводит этот код в /menu → Купить → «🎟️ У меня купон».",
@@ -646,7 +646,7 @@ async def cmd_grant_sub(msg: Message, session: AsyncSession, user: User) -> None
             uid,
             f"✓ Админ выдал тебе подписку <b>{product.value}</b> на {days} дн.\n"
             f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.\n\n"
-            "Заходи в /menu → 🖥️ Мои серверы → ⚙️ Настроить.",
+            "Заходи в /menu → ▣ Мои серверы → ⚙ Настроить.",
             parse_mode="HTML",
         )
     except Exception:  # noqa: BLE001
@@ -1158,7 +1158,7 @@ async def msg_sub_apply(
                 "✓ Админ выдал тебе подписку <b>"
                 f"{label}</b>: +{days} дн.\n"
                 f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.\n\n"
-                "Заходи в /menu → 🖥️ Мои серверы → ⚙️ Настроить — задай "
+                "Заходи в /menu → ▣ Мои серверы → ⚙ Настроить — задай "
                 f"{'golden_key' if product == ProductKind.CARDINAL else '.zip со скриптом'} "
                 "и сервер запустится.",
                 parse_mode="HTML",
@@ -1424,7 +1424,7 @@ async def msg_coupon_params(
         "<b>✓ Купон создан</b>\n\n"
         f"🖤 Код: <code>{cp.code}</code>\n"
         f"▪️ Продукт: <b>{label}</b>\n"
-        f"⏱ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
+        f"◷ Срок подписки: <b>{hours} ч</b> ({hours/24:g} дн)\n"
         f"🔢 Активаций: <b>{max_uses}</b>\n"
         f"⌛ Действует купон: <b>{valid_hours} ч</b> ({valid_hours/24:g} дн)",
         parse_mode="HTML",
@@ -1607,20 +1607,20 @@ async def msg_shard_add_apply(
         owner_id = await rc.autodetect_owner()
     except Exception as exc:  # noqa: BLE001
         await msg.answer(
-            f"❌ API key недействителен: <code>{exc}</code>",
+            f"✗ API key недействителен: <code>{exc}</code>",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
         await state.clear()
         return
     if not owner_id:
-        await msg.answer("❌ Не нашёл owner у этого API key.", reply_markup=admin_back())
+        await msg.answer("✗ Не нашёл owner у этого API key.", reply_markup=admin_back())
         await state.clear()
         return
     existing = await shards_repo.by_name(session, name)
     if existing:
         await msg.answer(
-            f"❌ Шард <b>{name}</b> уже есть.",
+            f"✗ Шард <b>{name}</b> уже есть.",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1651,7 +1651,7 @@ async def msg_shard_add_apply(
         )
     else:
         await msg.answer(
-            f"⚠️ Не получилось задеплоить: <code>{result.get('reason')}</code>",
+            f"⚠ Не получилось задеплоить: <code>{result.get('reason')}</code>",
             parse_mode="HTML",
             reply_markup=admin_back(),
         )
@@ -1717,7 +1717,7 @@ async def cb_shard_drop_start(
     await state.set_state(AdminFSM.awaiting_shard_drop)
     if cb.message:
         await cb.message.answer(
-            "Пришли имя шарда для удаления. ⚠️ Render-сервис тоже будет удалён, "
+            "Пришли имя шарда для удаления. ⚠ Render-сервис тоже будет удалён, "
             "тенанты на нём — переброшены при следующем reconcile. /cancel — отмена."
         )
     await cb.answer()

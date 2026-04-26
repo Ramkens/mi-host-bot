@@ -62,7 +62,7 @@ class AnalysisResult:
 def _scan_text(text: str, findings: list[str], score: list[int]) -> None:
     for label, pattern, weight in HARD_SIGNATURES:
         if re.search(pattern, text):
-            findings.append(f"⚠️ {label} (+{weight})")
+            findings.append(f"⚠ {label} (+{weight})")
             score[0] += weight
 
 
@@ -135,12 +135,12 @@ def analyze_zip(data: bytes, *, max_bytes: int = 25 * 1024 * 1024) -> AnalysisRe
             bytes_total += info.file_size
             # Path traversal
             if info.filename.startswith("/") or ".." in info.filename:
-                findings.append(f"⚠️ path traversal: {info.filename} (+50)")
+                findings.append(f"⚠ path traversal: {info.filename} (+50)")
                 score[0] += 50
                 continue
             # binaries — flag larger ones
             if info.filename.endswith((".exe", ".so", ".dll", ".bin")):
-                findings.append(f"⚠️ binary: {info.filename} (+10)")
+                findings.append(f"⚠ binary: {info.filename} (+10)")
                 score[0] += 10
                 continue
             try:
@@ -156,7 +156,7 @@ def analyze_zip(data: bytes, *, max_bytes: int = 25 * 1024 * 1024) -> AnalysisRe
 
     entrypoint = _detect_entrypoint(names)
     if not entrypoint:
-        findings.append("⚠️ entrypoint не найден (+15)")
+        findings.append("⚠ entrypoint не найден (+15)")
         score[0] += 15
 
     risk = min(100, score[0])

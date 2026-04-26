@@ -7,7 +7,13 @@ from io import BytesIO
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Document, Message
+from aiogram.types import (
+    CallbackQuery,
+    Document,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -25,16 +31,18 @@ router = Router(name="instances")
 class SetupFSM(StatesGroup):
     awaiting_golden_key = State()
     awaiting_tg_token = State()
+    awaiting_pw_choice = State()
+    awaiting_pw_custom = State()
     awaiting_zip = State()
 
 
 def _status_icon(st: InstanceStatus) -> str:
     return {
-        InstanceStatus.LIVE: "🟢",
-        InstanceStatus.DEPLOYING: "🟡",
+        InstanceStatus.LIVE: "●",
+        InstanceStatus.DEPLOYING: "◐",
         InstanceStatus.PENDING: "⚪",
-        InstanceStatus.SUSPENDED: "🟠",
-        InstanceStatus.FAILED: "🔴",
+        InstanceStatus.SUSPENDED: "◒",
+        InstanceStatus.FAILED: "○",
         InstanceStatus.DELETED: "🖤",
     }.get(st, "⚪")
 
@@ -46,7 +54,7 @@ async def cb_instances(
     items = await inst_repo.list_for_user(session, user.id)
     if not items:
         text = (
-            "<b>🖥️ Мои серверы</b>\n\n"
+            "<b>▣ Мои серверы</b>\n\n"
             "Серверов пока нет. Купи подписку через /menu → 🖤 Купить "
             "или активируй купон через /coupon."
         )
@@ -61,7 +69,7 @@ async def cb_instances(
                 )
         await cb.answer()
         return
-    lines = ["<b>🖥️ Мои серверы</b>", ""]
+    lines = ["<b>▣ Мои серверы</b>", ""]
     rows = []
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -112,22 +120,22 @@ async def cb_inst_open(
     if need_setup:
         if inst.product == ProductKind.CARDINAL:
             setup_hint = (
-                "\n\n⚙️ <b>Нужна настройка</b> — нажми «⚙️ Настроить» и пришли "
+                "\n\n⚙ <b>Нужна настройка</b> — нажми «⚙ Настроить» и пришли "
                 "<code>golden_key</code>."
             )
         else:
             setup_hint = (
-                "\n\n⚙️ <b>Нужна настройка</b> — нажми «⚙️ Настроить» и "
+                "\n\n⚙ <b>Нужна настройка</b> — нажми «⚙ Настроить» и "
                 "загрузи <code>.zip</code> со скриптом."
             )
     text = (
-        f"<b>🖥️ Сервер #{inst.id}</b>\n"
+        f"<b>▣ Сервер #{inst.id}</b>\n"
         f"▪️ Продукт: {inst.product.value}{tier_suffix}\n"
-        f"📡 Статус (БД): {_status_icon(inst.status)} {inst.status.value}\n"
-        f"⚙️ Процесс: {'жив' if s.get('alive') else 'нет'}\n"
+        f"⟳ Статус (БД): {_status_icon(inst.status)} {inst.status.value}\n"
+        f"⚙ Процесс: {'жив' if s.get('alive') else 'нет'}\n"
         f"🧬 PID: {s.get('pid') or '—'}\n"
-        f"⏱ Uptime: {s.get('uptime', 0)} сек\n"
-        f"🔄 Перезапусков: {s.get('restart_count', 0)}\n"
+        f"◷ Uptime: {s.get('uptime', 0)} сек\n"
+        f"↻ Перезапусков: {s.get('restart_count', 0)}\n"
         f"☁️ Render service: {inst.render_service_id or '—'}"
         f"{setup_hint}"
     )
@@ -275,7 +283,7 @@ async def cb_inst_setup(
         await state.set_state(SetupFSM.awaiting_zip)
         if cb.message:
             await cb.message.answer(
-                "📦 Пришли .zip-архив с Python-проектом одним документом (до 25 MB).\n"
+                "❒ Пришли .zip-архив с Python-проектом одним документом (до 25 MB).\n"
                 "Внутри — <code>main.py</code> и опц. <code>requirements.txt</code>.\n\n"
                 "/cancel — отмена.",
                 parse_mode="HTML",
@@ -294,7 +302,7 @@ async def setup_receive_key(
         return
     if len(text) != 32:
         await msg.answer(
-            "❌ golden_key должен быть 32 символа. Скопируй cookie с funpay.com целиком."
+            "✗ golden_key должен быть 32 символа. Скопируй cookie с funpay.com целиком."
         )
         return
     await state.update_data(setup_golden_key=text)
@@ -315,11 +323,7 @@ async def setup_receive_key(
 async def setup_receive_tg_token(
     msg: Message, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
-    from app.services.cardinal_config import (
-        generate_password,
-        hash_password,
-        validate_tg_token,
-    )
+    from app.services.cardinal_config import validate_tg_token
 
     raw = (msg.text or "").strip()
     if raw == "/cancel":
@@ -328,17 +332,98 @@ async def setup_receive_tg_token(
         return
     if not validate_tg_token(raw):
         await msg.answer(
-            "❌ Токен не тот. Формат: <code>123456:ABC-DEF...</code>",
+            "✗ Токен не подходит. Формат: <code>123456:ABC-DEF...</code>\n"
+            "Скопируй его целиком у <code>@BotFather</code>.",
             parse_mode="HTML",
         )
         return
-    tg_password = generate_password()
-    tg_pw_hash = hash_password(tg_password)
+    await state.update_data(setup_tg_token=raw)
     try:
         await msg.delete()
     except Exception:  # noqa: BLE001
         pass
+    await state.set_state(SetupFSM.awaiting_pw_choice)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="↻ Сгенерировать надёжный пароль",
+                    callback_data="setup:pw:gen",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✎ Придумаю свой",
+                    callback_data="setup:pw:custom",
+                )
+            ],
+        ]
+    )
+    await msg.answer(
+        "<b>🖤 Cardinal · пароль</b>\n\n"
+        "Этим паролем ты будешь входить в свой Telegram-бот Cardinal. "
+        "Можно сгенерировать автоматически или задать самому.",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
 
+
+@router.callback_query(SetupFSM.awaiting_pw_choice, F.data == "setup:pw:gen")
+async def setup_cb_pw_gen(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import generate_password, hash_password
+
+    pw = generate_password()
+    await state.update_data(setup_tg_pw_plain=pw, setup_tg_pw_hash=hash_password(pw))
+    if cb.message:
+        try:
+            await cb.message.delete()
+        except Exception:  # noqa: BLE001
+            pass
+        await _setup_finalize_cardinal(cb.message, state, session, user)
+    await cb.answer()
+
+
+@router.callback_query(SetupFSM.awaiting_pw_choice, F.data == "setup:pw:custom")
+async def setup_cb_pw_custom(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SetupFSM.awaiting_pw_custom)
+    if cb.message:
+        await cb.message.answer(
+            "✎ Пришли пароль одним сообщением.\n"
+            "<i>Требования:</i> минимум 8 символов, заглавные + строчные буквы "
+            "и хотя бы одна цифра.",
+            parse_mode="HTML",
+        )
+    await cb.answer()
+
+
+@router.message(SetupFSM.awaiting_pw_custom)
+async def setup_receive_pw_custom(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    from app.services.cardinal_config import hash_password, validate_password
+
+    pw = (msg.text or "").strip()
+    if pw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.")
+        return
+    ok, err = validate_password(pw)
+    if not ok:
+        await msg.answer(f"✗ {err}\nПопробуй ещё раз.")
+        return
+    await state.update_data(setup_tg_pw_plain=pw, setup_tg_pw_hash=hash_password(pw))
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await _setup_finalize_cardinal(msg, state, session, user)
+
+
+async def _setup_finalize_cardinal(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
     data = await state.get_data()
     inst_id = data.get("setup_inst_id")
     if not inst_id:
@@ -349,10 +434,13 @@ async def setup_receive_tg_token(
         await state.clear()
         return
     gk = data.get("setup_golden_key") or (inst.config or {}).get("golden_key") or ""
+    tg_token = data.get("setup_tg_token", "") or ""
+    tg_pw_plain = data.get("setup_tg_pw_plain", "") or ""
+    tg_pw_hash = data.get("setup_tg_pw_hash", "") or ""
     inst.config = {
         **(inst.config or {}),
         "golden_key": gk,
-        "tg_token": raw,
+        "tg_token": tg_token,
         "tg_secret_hash": tg_pw_hash,
     }
     inst.status = InstanceStatus.DEPLOYING
@@ -365,7 +453,7 @@ async def setup_receive_tg_token(
             await start_tenant(
                 inst.id,
                 golden_key=gk,
-                telegram_token=raw,
+                telegram_token=tg_token,
                 secret_key_hash=tg_pw_hash,
             )
             inst.status = InstanceStatus.LIVE
@@ -375,10 +463,12 @@ async def setup_receive_tg_token(
             inst.status = InstanceStatus.FAILED
     await session.commit()
     await msg.answer(
-        f"<b>✓ Сервер #{inst.id} запущен.</b>\n\n"
-        f"▪️ Пароль от Telegram-бота Cardinal: <code>{tg_password}</code>\n"
-        f"<i>(покажу один раз — сохрани)</i>\n\n"
-        f"Теперь открой своего Telegram-бота и напиши ему <code>/start</code>.",
+        f"<b>🖤 Спасибо!</b> Сервер #{inst.id} настроен.\n\n"
+        f"▪️ Пароль от Telegram-бота Cardinal: <code>{tg_pw_plain}</code>\n"
+        f"<i>Сохрани — показываю один раз.</i>\n\n"
+        f"▪️ Бот запустится в течение ~5 минут.\n"
+        f"Как только будет готов — напиши своему Telegram-боту "
+        f"<code>/start</code> и введи этот пароль.",
         parse_mode="HTML",
         reply_markup=instance_actions(inst.id, inst.product.value),
     )
@@ -424,7 +514,7 @@ async def setup_receive_zip(
             inst.status = InstanceStatus.FAILED
             await session.commit()
             await msg.answer(
-                "🔴 Архив не прошёл безопасный анализ. "
+                "○ Архив не прошёл безопасный анализ. "
                 f"{analysis.report or ''}".strip(),
                 reply_markup=instance_actions(inst.id, inst.product.value),
             )
@@ -445,7 +535,7 @@ async def setup_receive_zip(
         inst.status = InstanceStatus.FAILED
         await session.commit()
         await msg.answer(
-            f"🔴 Не удалось развернуть: {exc}",
+            f"○ Не удалось развернуть: {exc}",
             reply_markup=instance_actions(inst.id, inst.product.value),
         )
         await state.clear()

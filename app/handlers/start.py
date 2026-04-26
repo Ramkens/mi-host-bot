@@ -47,8 +47,8 @@ async def _greeting_text(session: AsyncSession, user: User) -> str:
         "",
         f"🧩 Свободных серверов: <b>{free_card}</b> (под Cardinal)",
         "",
-        f"👤 <b>{user.first_name or 'юзер'}</b>  ·  id <code>{user.id}</code>",
-        f"🏅 lvl {user.level}  ·  xp {user.xp}  ·  🪙 {user.coins}",
+        f"⎔ <b>{user.first_name or 'юзер'}</b>  ·  id <code>{user.id}</code>",
+        f"🏅 lvl {user.level}  ·  xp {user.xp}  ·  ⊙ {user.coins}",
     ]
     active_subs = [s for s in subs if s.expires_at > now_utc()]
     if active_subs:
@@ -63,10 +63,10 @@ async def _greeting_text(session: AsyncSession, user: User) -> str:
         lines.append("<i>▫️ нет активных подписок · /menu → 🖤 Купить</i>")
     if instances:
         lines.append("")
-        lines.append("<b>🖥️ Серверы</b>")
+        lines.append("<b>▣ Серверы</b>")
         status_icon = {
-            "live": "🟢", "deploying": "🟡", "pending": "⚪",
-            "suspended": "🟠", "failed": "🔴", "deleted": "🖤",
+            "live": "●", "deploying": "◐", "pending": "⚪",
+            "suspended": "◒", "failed": "○", "deleted": "🖤",
         }
         for inst in instances[:5]:
             tier = ((inst.config or {}).get("tier") or "std").lower()
