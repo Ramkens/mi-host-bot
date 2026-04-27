@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 router = Router(name="instances")
 
 
+async def _is_master_owned(session: AsyncSession, inst: Instance) -> bool:
+    """Master owns the tenant when shard_id is NULL or the shard is dead."""
+    if inst.shard_id is None:
+        return True
+    from app.repos import shards as shards_repo
+
+    shard = await shards_repo.by_id(session, inst.shard_id)
+    return not shard or not shards_repo.is_alive(shard)
+
+
 def status_dot(inst: Instance, alive: bool) -> str:
     """Status indicator — only emoji we keep is the colored circle."""
     if inst.status == InstanceStatus.LIVE and alive:
@@ -122,13 +132,14 @@ async def cb_inst_open(
         await cb.answer("Не найдено", show_alert=True)
         return
     s = supervisor.status(inst_id)
-    # Авто-восстановление: если в БД статус LIVE, а процесса нет —
-    # запускаем заново на месте, чтобы пользователю не приходилось жать кнопки.
+    # Авто-восстановление: если пользователь хочет, чтобы сервер был живой
+    # (desired_state=live), а процесса нет — поднимаем прямо здесь, без кнопок.
     if (
-        inst.status == InstanceStatus.LIVE
+        inst.desired_state == "live"
+        and inst.status != InstanceStatus.DELETED
         and not s.get("alive")
         and inst.product == ProductKind.CARDINAL
-        and inst.shard_id is None
+        and await _is_master_owned(session, inst)
     ):
         cfg = inst.config or {}
         gk = cfg.get("golden_key")
@@ -143,6 +154,9 @@ async def cb_inst_open(
                     telegram_secret=cfg.get("telegram_secret") or "",
                     locale=cfg.get("locale") or "ru",
                 )
+                inst.status = InstanceStatus.LIVE
+                inst.actual_state = "live"
+                await session.flush()
                 s = supervisor.status(inst_id)
             except Exception:  # noqa: BLE001
                 logger.exception("auto-restart on open failed")
