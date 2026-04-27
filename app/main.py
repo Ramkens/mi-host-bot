@@ -316,6 +316,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Periodically auto-restart any LIVE master-side tenants whose process died.
     app.state.watchdog_task = asyncio.create_task(_tenant_watchdog())
 
+    # Keep all shards (and ourselves) awake on Render Free plans.
+    from app.services.keep_alive import run_keeper_forever
+
+    app.state.keeper_task = asyncio.create_task(run_keeper_forever(interval=60))
+
     # If a DB rotation just completed, announce "готово".
     from app.services.db_rotation import announce_done_if_pending
 
@@ -331,6 +336,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         wd = getattr(app.state, "watchdog_task", None)
         if wd:
             wd.cancel()
+        ka = getattr(app.state, "keeper_task", None)
+        if ka:
+            ka.cancel()
         from app.services.supervisor import supervisor
 
         await supervisor.stop_all()
