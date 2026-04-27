@@ -133,7 +133,14 @@ async def occupancy(session: AsyncSession) -> dict[int, int]:
 
 
 async def pick_least_loaded(session: AsyncSession) -> Optional[Shard]:
-    """Pick the active shard with the most free capacity (load < capacity)."""
+    """Pick the ALIVE active shard with the most free capacity.
+
+    Dead shards (no recent heartbeat) are skipped so that new tenants never
+    get assigned to a host whose worker isn't running — otherwise the tenant
+    would just sit in the DB forever waiting for a worker that never comes.
+    Returning ``None`` lets the caller fall back to running the tenant on
+    master directly (``shard_id=NULL``).
+    """
     shards = await active(session)
     if not shards:
         return None
@@ -141,6 +148,8 @@ async def pick_least_loaded(session: AsyncSession) -> Optional[Shard]:
     best: Optional[Shard] = None
     best_free = -1
     for shard in shards:
+        if not is_alive(shard):
+            continue
         free = shard.capacity - occ.get(shard.id, 0)
         if free <= 0:
             continue
@@ -150,8 +159,14 @@ async def pick_least_loaded(session: AsyncSession) -> Optional[Shard]:
     return best
 
 
-def is_alive(shard: Shard, *, threshold_seconds: int = 600) -> bool:
-    """Heuristic: shard is 'alive' if it heartbeated within the threshold."""
+def is_alive(shard: Shard, *, threshold_seconds: int = 90) -> bool:
+    """Shard is 'alive' if its worker heartbeated within the threshold.
+
+    Workers heartbeat every ``POLL_INTERVAL`` (10 s) in ``shard_worker.py``,
+    so 90 s is generous enough to survive a few missed ticks without thinking
+    the shard is dead. Shards that never heartbeated (``last_seen_at=NULL``)
+    are always considered dead.
+    """
     if shard.last_seen_at is None:
         return False
     return (now_utc() - shard.last_seen_at).total_seconds() < threshold_seconds

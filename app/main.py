@@ -47,32 +47,49 @@ async def _bootstrap_admins(bot: Bot, dp: Dispatcher) -> None:
         await s.commit()
 
 
+async def _master_owned_instances(s) -> list:
+    """Return instances that this master process must run itself.
+
+    A tenant is owned by master when either:
+      * its ``shard_id`` is NULL (explicitly assigned to master), OR
+      * it is assigned to a shard whose worker has not heart-beated recently
+        (dead / never-deployed shard).
+    Only instances with ``desired_state=live`` and not DELETED are returned.
+    """
+    from sqlalchemy import select
+    from app.db.models import Instance, InstanceStatus, Shard
+    from app.repos.shards import is_alive
+
+    res = await s.execute(
+        select(Instance).where(
+            Instance.desired_state == "live",
+            Instance.status != InstanceStatus.DELETED,
+        )
+    )
+    items = list(res.scalars())
+    # Fetch all shards once, build an alive-lookup.
+    res2 = await s.execute(select(Shard))
+    alive_ids = {sh.id for sh in res2.scalars() if is_alive(sh)}
+    return [inst for inst in items if inst.shard_id is None or inst.shard_id not in alive_ids]
+
+
 async def _restore_tenants() -> None:
-    """Re-spawn every master-side tenant that the user wants running.
+    """Re-spawn every tenant that must run on this master process.
 
     Source of truth is ``desired_state=live``. We ignore ``status`` so that
     tenants which were left in DEPLOYING / FAILED / SUSPENDED for any reason
     (Render restart mid-boot, bot crash, transient OOM) still come back to
-    life automatically. Only DELETED rows are skipped.
+    life automatically. Tenants assigned to live shard workers are left to
+    those workers; tenants whose shard is dead are adopted by master.
     """
-    from sqlalchemy import select
-    from app.db.models import Instance, InstanceStatus, ProductKind
+    from app.db.models import ProductKind
     from app.services.cardinal import start_tenant
     from app.services.script_host import tenant_dir
     from app.services.supervisor import TenantSpec, supervisor
     import sys
 
     async with SessionLocal() as s:
-        # Only restore tenants belonging to this (master) process — shard-
-        # assigned tenants are owned by the corresponding worker.
-        res = await s.execute(
-            select(Instance).where(
-                Instance.desired_state == "live",
-                Instance.status != InstanceStatus.DELETED,
-                Instance.shard_id.is_(None),
-            )
-        )
-        items = list(res.scalars())
+        items = await _master_owned_instances(s)
     for inst in items:
         try:
             if inst.product == ProductKind.CARDINAL:
@@ -112,7 +129,6 @@ async def _tenant_watchdog() -> None:
     being briefly in DEPLOYING/FAILED/SUSPENDED state) the Cardinal comes back
     to life automatically. Only DELETED rows are left alone.
     """
-    from sqlalchemy import select
     from app.db.models import Instance, InstanceStatus, ProductKind
     from app.services.cardinal import start_tenant
     from app.services.supervisor import supervisor
@@ -120,14 +136,7 @@ async def _tenant_watchdog() -> None:
     while True:
         try:
             async with SessionLocal() as s:
-                res = await s.execute(
-                    select(Instance).where(
-                        Instance.desired_state == "live",
-                        Instance.status != InstanceStatus.DELETED,
-                        Instance.shard_id.is_(None),
-                    )
-                )
-                items = list(res.scalars())
+                items = await _master_owned_instances(s)
             for inst in items:
                 if supervisor.is_running(inst.id):
                     # Make sure the DB reflects the actual running state so
