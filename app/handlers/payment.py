@@ -488,8 +488,15 @@ async def _provision_instance(
     inst.status = InstanceStatus.DEPLOYING
     inst.desired_state = "live"
     await session.flush()
-    # Master-side direct start (works when shard_id is None or master).
-    if inst.shard_id is None:
+    # Master-side direct start. Runs the tenant on master whenever master
+    # owns it: shard_id is NULL, or the assigned shard has no live worker.
+    master_owns = inst.shard_id is None
+    if inst.shard_id is not None:
+        from app.repos import shards as shards_repo
+
+        shard = await shards_repo.by_id(session, inst.shard_id)
+        master_owns = not shard or not shards_repo.is_alive(shard)
+    if master_owns:
         try:
             await start_tenant(
                 inst.id,
