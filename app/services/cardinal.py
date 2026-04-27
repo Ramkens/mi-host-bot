@@ -77,23 +77,54 @@ def _tenant_dir(instance_id: int) -> Path:
     return DEFAULT_DATA_DIR / "cardinal" / str(instance_id)
 
 
+def _hash_password(password: str) -> str:
+    """Bcrypt-hash a password the same way Cardinal's first_setup does."""
+    try:
+        import bcrypt  # type: ignore[import-untyped]
+    except ImportError:
+        return ""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
 def _write_main_cfg(
     tenant_dir: Path,
     *,
     golden_key: str,
     user_agent: str = "",
+    telegram_token: str = "",
+    telegram_secret: str = "",
+    locale: str = "ru",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> None:
     """(Re)write ``configs/_main.cfg`` from the default + user overrides."""
     cfg_dir = tenant_dir / "configs"
     cfg_dir.mkdir(exist_ok=True)
-    base = default_main_cfg(golden_key=golden_key, user_agent=user_agent)
+    cfg_kwargs: dict[str, object] = {
+        "golden_key": golden_key,
+        "user_agent": user_agent,
+        "telegram_token": telegram_token,
+        "telegram_enabled": bool(telegram_token),
+        "locale": locale,
+    }
+    if telegram_token and telegram_secret:
+        h = _hash_password(telegram_secret)
+        if h:
+            cfg_kwargs["secret_key_hash"] = h
+    base = default_main_cfg(**cfg_kwargs)  # type: ignore[arg-type]
     sections = merge_overrides(base, overrides)
     # Make sure golden_key/user_agent in [FunPay] always reflect the
     # latest values, even if the user-supplied override forgot them.
     sections.setdefault("FunPay", {})["golden_key"] = golden_key
     if user_agent:
         sections["FunPay"]["user_agent"] = user_agent
+    if telegram_token:
+        sections.setdefault("Telegram", {})["token"] = telegram_token
+        sections["Telegram"]["enabled"] = "1"
+        if telegram_secret:
+            sections["Telegram"]["secretKeyHash"] = _hash_password(telegram_secret)
+    if locale:
+        sections.setdefault("FunPay", {})["locale"] = locale
+        sections.setdefault("Other", {})["language"] = locale
     (cfg_dir / "_main.cfg").write_text(render_main_cfg(sections), encoding="utf-8")
     # Cardinal also expects two empty optional configs; create if missing.
     for fname in ("auto_response.cfg", "auto_delivery.cfg"):
@@ -107,6 +138,9 @@ async def provision_tenant(
     *,
     golden_key: str,
     user_agent: Optional[str] = None,
+    telegram_token: str = "",
+    telegram_secret: str = "",
+    locale: str = "ru",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> Path:
     cache = await ensure_cardinal_cache()
@@ -126,6 +160,9 @@ async def provision_tenant(
         tenant_dir,
         golden_key=golden_key,
         user_agent=user_agent or "",
+        telegram_token=telegram_token,
+        telegram_secret=telegram_secret,
+        locale=locale,
         overrides=overrides,
     )
     # Mi Host shim that re-applies env-driven golden_key on every restart.
@@ -173,10 +210,18 @@ async def start_tenant(
     instance_id: int,
     *,
     golden_key: str,
+    telegram_token: str = "",
+    telegram_secret: str = "",
+    locale: str = "ru",
     overrides: Optional[dict[str, dict[str, str]]] = None,
 ) -> dict[str, Any]:
     tenant_dir = await provision_tenant(
-        instance_id, golden_key=golden_key, overrides=overrides
+        instance_id,
+        golden_key=golden_key,
+        telegram_token=telegram_token,
+        telegram_secret=telegram_secret,
+        locale=locale,
+        overrides=overrides,
     )
     spec = TenantSpec(
         instance_id=instance_id,
@@ -259,6 +304,28 @@ def remove_tenant_dir(instance_id: int) -> None:
     """Wipe the tenant's working directory (used on purge / unsubscribe)."""
     tenant_dir = _tenant_dir(instance_id)
     shutil.rmtree(tenant_dir, ignore_errors=True)
+
+
+def read_full_logs(instance_id: int, *, max_bytes: int = 5 * 1024 * 1024) -> bytes:
+    """Read Cardinal's persistent log file (``logs/log.log``) for a tenant.
+
+    Cardinal uses ``RotatingFileHandler`` (20 MB × 25 backups). We read up
+    to ``max_bytes`` from the *tail* of the current file so admin gets the
+    most recent activity without dumping multi-GB history.
+    """
+    log_path = _tenant_dir(instance_id) / "logs" / "log.log"
+    if not log_path.exists():
+        return b""
+    try:
+        size = log_path.stat().st_size
+        with open(log_path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                # Skip partial first line.
+                f.readline()
+            return f.read()
+    except OSError:
+        return b""
 
 
 async def write_user_aux_cfg(

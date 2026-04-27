@@ -28,7 +28,7 @@ def back_to_menu() -> InlineKeyboardMarkup:
 
 
 def buy_menu() -> InlineKeyboardMarkup:
-    """Один продукт — FunPay Cardinal."""
+    """Один продукт — FunPay Cardinal. Купон — только на шаге оплаты."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -37,7 +37,6 @@ def buy_menu() -> InlineKeyboardMarkup:
                     callback_data="buy:start:cardinal",
                 )
             ],
-            [InlineKeyboardButton(text="У меня есть купон", callback_data="buy:coupon")],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
         ]
     )
@@ -50,6 +49,29 @@ def buy_confirm() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Оплатить", callback_data="buy:invoice")],
             [InlineKeyboardButton(text="У меня есть купон", callback_data="buy:coupon")],
             [InlineKeyboardButton(text="« Отмена", callback_data="menu")],
+        ]
+    )
+
+
+def buy_skip() -> InlineKeyboardMarkup:
+    """Skip an optional FSM step (Telegram token, secret, etc.)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить", callback_data="buy:skip")],
+            [InlineKeyboardButton(text="« Отмена", callback_data="menu")],
+        ]
+    )
+
+
+def buy_locale() -> InlineKeyboardMarkup:
+    """Pick UI/automated message language for Cardinal."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Русский", callback_data="buy:locale:ru"),
+                InlineKeyboardButton(text="English", callback_data="buy:locale:en"),
+                InlineKeyboardButton(text="Українська", callback_data="buy:locale:uk"),
+            ],
         ]
     )
 
@@ -245,7 +267,7 @@ def admin_coupons_menu() -> InlineKeyboardMarkup:
 
 
 def admin_coupon_days() -> InlineKeyboardMarkup:
-    rows = []
+    rows: list[list[InlineKeyboardButton]] = []
     presets = (7, 30, 90, 365)
     row: list[InlineKeyboardButton] = []
     for d in presets:
@@ -253,7 +275,29 @@ def admin_coupon_days() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=f"{d} дн", callback_data=f"admin:coupon:days:{d}")
         )
     rows.append(row)
+    rows.append([
+        InlineKeyboardButton(text="Своё число дней", callback_data="admin:coupon:days:custom")
+    ])
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin:coupons")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_coupon_uses() -> InlineKeyboardMarkup:
+    """Step 2 of coupon creation — pick max activations."""
+    rows: list[list[InlineKeyboardButton]] = []
+    presets = (1, 5, 10, 50)
+    row: list[InlineKeyboardButton] = []
+    for n in presets:
+        label = "1 (одноразовый)" if n == 1 else f"{n}"
+        row.append(
+            InlineKeyboardButton(text=label, callback_data=f"admin:coupon:uses:{n}")
+        )
+    rows.append(row[:2])
+    rows.append(row[2:])
+    rows.append([
+        InlineKeyboardButton(text="Своё число", callback_data="admin:coupon:uses:custom")
+    ])
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin:coupon:new")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

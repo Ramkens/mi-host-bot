@@ -204,10 +204,13 @@ class ContentPost(Base):
 
 
 class Coupon(Base):
-    """Single-use code that grants a free subscription period.
+    """Code that grants a free subscription period.
 
-    Created by an admin via /create_coupon, redeemed by a user during the
-    buy flow as an alternative to paying.
+    Created by an admin via /create_coupon (or the inline panel), redeemed
+    by a user during checkout as an alternative to paying. Supports
+    multi-use coupons via ``max_uses`` / ``uses_count`` (default = single).
+    ``used_by`` / ``used_at`` track the *last* redemption (kept for
+    backward compatibility with old single-use rows).
     """
 
     __tablename__ = "coupons"
@@ -216,6 +219,8 @@ class Coupon(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     product: Mapped[ProductKind] = mapped_column(Enum(ProductKind, name="product_kind"))
     days: Mapped[int] = mapped_column(Integer, default=30)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    uses_count: Mapped[int] = mapped_column(Integer, default=0)
     issued_by: Mapped[Optional[int]] = mapped_column(BigInteger)
     used_by: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
     used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

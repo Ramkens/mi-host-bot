@@ -14,7 +14,13 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +37,7 @@ from app.keyboards.main import (
     admin_back,
     admin_confirm,
     admin_coupon_days,
+    admin_coupon_uses,
     admin_coupons_menu,
     admin_menu,
     admin_server_actions,
@@ -55,6 +62,8 @@ class AdminFSM(StatesGroup):
     awaiting_new_admin = State()
     awaiting_user_id = State()
     awaiting_coupon_del_code = State()
+    awaiting_coupon_days_custom = State()
+    awaiting_coupon_uses_custom = State()
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +289,18 @@ async def cb_server_stop(cb: CallbackQuery, session: AsyncSession, user: User) -
 
 @router.callback_query(F.data.startswith("adm:srv:logs:"))
 async def cb_server_logs(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    """Send full Cardinal logs to admin.
+
+    Combines:
+      * supervisor's stdout/stderr tail (in-memory, 5000 lines)
+      * Cardinal's persistent ``logs/log.log`` from the tenant dir
+        (rotating file handler, last ~5 MB)
+
+    Short outputs are sent inline as ``<pre>`` HTML; longer outputs are
+    uploaded as a ``.log`` file so nothing gets truncated.
+    """
+    from app.services.cardinal import read_full_logs
+
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
@@ -288,14 +309,43 @@ async def cb_server_logs(cb: CallbackQuery, session: AsyncSession, user: User) -
     if not inst:
         await cb.answer("Не найден", show_alert=True)
         return
-    lines = supervisor.tail(inst.id, lines=60)
-    text = "<b>Логи (последние 60 строк)</b>\n\n<pre>"
-    text += "\n".join(lines) if lines else "Логов пока нет"
-    text += "</pre>"
-    if cb.message:
-        await cb.message.answer(
-            text, parse_mode="HTML", reply_markup=admin_server_actions(inst.id)
+    tail_lines = supervisor.tail(inst.id, lines=5000)
+    file_log = read_full_logs(inst.id)
+    parts: list[bytes] = []
+    if tail_lines:
+        parts.append(("=== supervisor (stdout/stderr) ===\n").encode())
+        parts.append(("\n".join(tail_lines) + "\n").encode())
+    if file_log:
+        parts.append(("\n=== cardinal logs/log.log ===\n").encode())
+        parts.append(file_log)
+    blob = b"".join(parts)
+    if not blob:
+        if cb.message:
+            await cb.message.answer(
+                "Логов пока нет (сервер не запускался или только что стартовал).",
+                reply_markup=admin_server_actions(inst.id),
+            )
+        await cb.answer()
+        return
+    # Telegram message text limit is ~4096 chars; below ~3500 chars we
+    # send inline, otherwise upload as a file so admin gets full output.
+    if len(blob) <= 3500:
+        text = (
+            "<b>Логи сервера</b>\n\n<pre>"
+            + blob.decode("utf-8", errors="replace").replace("<", "&lt;").replace(">", "&gt;")
+            + "</pre>"
         )
+        if cb.message:
+            await cb.message.answer(
+                text, parse_mode="HTML", reply_markup=admin_server_actions(inst.id)
+            )
+    else:
+        if cb.message:
+            await cb.message.answer_document(
+                BufferedInputFile(blob, filename=f"server-{inst.id}.log"),
+                caption=f"Логи сервера #{inst.id} ({len(blob)} байт)",
+                reply_markup=admin_server_actions(inst.id),
+            )
     await cb.answer()
 
 
@@ -329,10 +379,17 @@ async def cb_server_delete_yes(
     if not inst:
         await cb.answer("Не найден", show_alert=True)
         return
-    if supervisor.tenants.get(inst.id):
-        await supervisor.stop(inst.id)
+    # Stop the running subprocess (if any) before marking deleted, so the
+    # slot is freed both in supervisor.tenants and in our DB accounting.
+    try:
+        if supervisor.tenants.get(inst.id):
+            await supervisor.stop(inst.id)
+    except Exception:  # noqa: BLE001
+        logger.exception("supervisor.stop failed during admin delete")
     inst.status = InstanceStatus.DELETED
     inst.desired_state = "stopped"
+    inst.shard_id = None
+    inst.actual_state = "stopped"
     await session.commit()
     await cb.answer("Удалено")
     await cb_servers(cb, session, user)
@@ -548,35 +605,162 @@ async def cb_coupons_menu(cb: CallbackQuery, session: AsyncSession, user: User) 
 
 
 @router.callback_query(F.data == "admin:coupon:new")
-async def cb_coupon_new(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+async def cb_coupon_new(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
+    await state.clear()
     await _send_or_edit(
-        cb, "<b>Купон</b>\nНа сколько дней?", admin_coupon_days()
+        cb, "<b>Купон · шаг 1/2</b>\nНа сколько дней?", admin_coupon_days()
     )
     await cb.answer()
 
 
+@router.callback_query(F.data == "admin:coupon:days:custom")
+async def cb_coupon_days_custom(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    await state.set_state(AdminFSM.awaiting_coupon_days_custom)
+    if cb.message:
+        await cb.message.answer(
+            "Введи число дней (1–3650). /cancel — отмена.",
+        )
+    await cb.answer()
+
+
+@router.message(AdminFSM.awaiting_coupon_days_custom)
+async def msg_coupon_days_custom(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        return
+    raw = (msg.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.", reply_markup=admin_coupons_menu())
+        return
+    try:
+        days = int(raw)
+    except ValueError:
+        await msg.answer("Нужно целое число дней. /cancel — отмена.")
+        return
+    if days < 1 or days > 3650:
+        await msg.answer("Допустимо 1–3650 дней.")
+        return
+    await state.update_data(coupon_days=days)
+    await msg.answer(
+        f"<b>Купон · шаг 2/2</b>\nДней: {days}\nСколько активаций?",
+        parse_mode="HTML",
+        reply_markup=admin_coupon_uses(),
+    )
+
+
 @router.callback_query(F.data.regexp(r"^admin:coupon:days:(\d+)$"))
-async def cb_coupon_make(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+async def cb_coupon_days_preset(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
     days = int(cb.data.split(":")[3])
+    await state.update_data(coupon_days=days)
+    await _send_or_edit(
+        cb,
+        f"<b>Купон · шаг 2/2</b>\nДней: {days}\nСколько активаций?",
+        admin_coupon_uses(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:coupon:uses:custom")
+async def cb_coupon_uses_custom(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    data = await state.get_data()
+    if "coupon_days" not in data:
+        await cb.answer("Сначала выбери число дней", show_alert=True)
+        return
+    await state.set_state(AdminFSM.awaiting_coupon_uses_custom)
+    if cb.message:
+        await cb.message.answer(
+            "Введи число активаций (1–10000). /cancel — отмена.",
+        )
+    await cb.answer()
+
+
+@router.message(AdminFSM.awaiting_coupon_uses_custom)
+async def msg_coupon_uses_custom(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        return
+    raw = (msg.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await msg.answer("Отменено.", reply_markup=admin_coupons_menu())
+        return
+    try:
+        uses = int(raw)
+    except ValueError:
+        await msg.answer("Нужно целое число. /cancel — отмена.")
+        return
+    if uses < 1 or uses > 10000:
+        await msg.answer("Допустимо 1–10000 активаций.")
+        return
+    await _finalize_coupon(msg, state, session, user, uses=uses)
+
+
+@router.callback_query(F.data.regexp(r"^admin:coupon:uses:(\d+)$"))
+async def cb_coupon_uses_preset(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    uses = int(cb.data.split(":")[3])
+    await _finalize_coupon(cb, state, session, user, uses=uses)
+    await cb.answer()
+
+
+async def _finalize_coupon(
+    src: Message | CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    user: User,
+    *,
+    uses: int,
+) -> None:
+    data = await state.get_data()
+    days = int(data.get("coupon_days") or 30)
     coupon = await coupons_repo.create(
-        session, product=ProductKind.CARDINAL, days=days, issued_by=user.id
+        session,
+        product=ProductKind.CARDINAL,
+        days=days,
+        max_uses=uses,
+        issued_by=user.id,
     )
     await session.commit()
+    await state.clear()
+    uses_label = "1 (одноразовый)" if uses == 1 else f"{uses}"
     text = (
         "<b>Купон создан</b>\n\n"
         f"Код: <code>{coupon.code}</code>\n"
         f"Продукт: cardinal\n"
         f"Дней: {days}\n"
-        f"Использований: 1 (одноразовый)"
+        f"Активаций: {uses_label}"
     )
-    await _send_or_edit(cb, text, admin_coupons_menu())
-    await cb.answer()
+    if isinstance(src, CallbackQuery):
+        await _send_or_edit(src, text, admin_coupons_menu())
+    else:
+        await src.answer(text, parse_mode="HTML", reply_markup=admin_coupons_menu())
 
 
 @router.callback_query(F.data == "admin:coupon:list")
@@ -592,9 +776,16 @@ async def cb_coupon_list(cb: CallbackQuery, session: AsyncSession, user: User) -
     if not items:
         lines.append("—")
     for c in items:
-        used = "использован" if c.used_by else "свободен"
+        max_uses = getattr(c, "max_uses", 1) or 1
+        used = getattr(c, "uses_count", 0) or 0
+        if used >= max_uses:
+            tag = "исчерпан"
+        elif used > 0:
+            tag = f"{used}/{max_uses}"
+        else:
+            tag = f"свободен ({max_uses})"
         lines.append(
-            f"<code>{c.code}</code> · {c.product.value} · {c.days}д · {used}"
+            f"<code>{c.code}</code> · {c.days}д · {tag}"
         )
     await _send_or_edit(cb, "\n".join(lines), admin_coupons_menu())
     await cb.answer()
@@ -731,19 +922,24 @@ async def cmd_create_coupon(
         return
     parts = (command.args or "").split()
     if not parts:
-        await msg.answer("Использование: /create_coupon <days>")
+        await msg.answer("Использование: /create_coupon <days> [uses=1]")
         return
     try:
         days = int(parts[0])
+        uses = int(parts[1]) if len(parts) >= 2 else 1
     except ValueError:
-        await msg.answer("days должно быть числом")
+        await msg.answer("days и uses должны быть числами")
         return
     coupon = await coupons_repo.create(
-        session, product=ProductKind.CARDINAL, days=days, issued_by=user.id
+        session,
+        product=ProductKind.CARDINAL,
+        days=days,
+        max_uses=uses,
+        issued_by=user.id,
     )
     await session.commit()
     await msg.answer(
-        f"Купон <code>{coupon.code}</code> · {days}д",
+        f"Купон <code>{coupon.code}</code> · {days}д · {uses} акт.",
         parse_mode="HTML",
     )
 
@@ -761,9 +957,11 @@ async def cmd_coupons(msg: Message, session: AsyncSession, user: User) -> None:
         return
     lines = []
     for c in items:
-        used = "использован" if c.used_by else "свободен"
+        max_uses = getattr(c, "max_uses", 1) or 1
+        used = getattr(c, "uses_count", 0) or 0
+        tag = "исчерпан" if used >= max_uses else f"{used}/{max_uses}"
         lines.append(
-            f"<code>{c.code}</code> · {c.product.value} · {c.days}д · {used}"
+            f"<code>{c.code}</code> · {c.days}д · {tag}"
         )
     await msg.answer("\n".join(lines), parse_mode="HTML")
 

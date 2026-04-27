@@ -130,12 +130,19 @@ async def cb_inst_open(
         and inst.product == ProductKind.CARDINAL
         and inst.shard_id is None
     ):
-        gk = (inst.config or {}).get("golden_key")
+        cfg = inst.config or {}
+        gk = cfg.get("golden_key")
         if gk:
             try:
                 from app.services.cardinal import start_tenant
 
-                await start_tenant(inst.id, golden_key=gk)
+                await start_tenant(
+                    inst.id,
+                    golden_key=gk,
+                    telegram_token=cfg.get("telegram_token") or "",
+                    telegram_secret=cfg.get("telegram_secret") or "",
+                    locale=cfg.get("locale") or "ru",
+                )
                 s = supervisor.status(inst_id)
             except Exception:  # noqa: BLE001
                 logger.exception("auto-restart on open failed")
@@ -213,11 +220,18 @@ async def cb_inst_restart(
         if inst.product == ProductKind.CARDINAL:
             from app.services.cardinal import start_tenant
 
-            gk = (inst.config or {}).get("golden_key")
+            cfg = inst.config or {}
+            gk = cfg.get("golden_key")
             if not gk:
                 await cb.answer("Сначала задайте golden_key", show_alert=True)
                 return
-            await start_tenant(inst.id, golden_key=gk)
+            await start_tenant(
+                inst.id,
+                golden_key=gk,
+                telegram_token=cfg.get("telegram_token") or "",
+                telegram_secret=cfg.get("telegram_secret") or "",
+                locale=cfg.get("locale") or "ru",
+            )
     inst.status = InstanceStatus.LIVE
     inst.desired_state = "live"
     inst.actual_state = "live"

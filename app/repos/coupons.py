@@ -23,6 +23,7 @@ async def create(
     *,
     product: ProductKind,
     days: int = 30,
+    max_uses: int = 1,
     issued_by: Optional[int] = None,
     expires_in_days: Optional[int] = 30,
     note: Optional[str] = None,
@@ -41,6 +42,8 @@ async def create(
         code=code,
         product=product,
         days=days,
+        max_uses=max(1, int(max_uses)),
+        uses_count=0,
         issued_by=issued_by,
         expires_at=expires_at,
         note=note,
@@ -58,7 +61,7 @@ async def by_code(session: AsyncSession, code: str) -> Optional[Coupon]:
 async def list_all(session: AsyncSession, *, only_unused: bool = False) -> list[Coupon]:
     q = select(Coupon).order_by(Coupon.created_at.desc())
     if only_unused:
-        q = q.where(Coupon.used_by.is_(None))
+        q = q.where(Coupon.uses_count < Coupon.max_uses)
     res = await session.execute(q)
     return list(res.scalars())
 
@@ -70,10 +73,11 @@ async def redeem(
     cp = await by_code(session, code.strip().upper())
     if not cp:
         return False, "Купон не найден.", None
-    if cp.used_by:
-        return False, "Купон уже использован.", None
+    if cp.uses_count >= cp.max_uses:
+        return False, "Купон исчерпал лимит активаций.", None
     if cp.expires_at and cp.expires_at < now_utc():
         return False, "Срок купона истёк.", None
+    cp.uses_count = (cp.uses_count or 0) + 1
     cp.used_by = user_id
     cp.used_at = now_utc()
     await session.flush()
