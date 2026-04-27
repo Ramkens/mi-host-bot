@@ -248,10 +248,15 @@ async def cb_inst_logs(
     if not inst or inst.user_id != user.id:
         await cb.answer("Не найдено", show_alert=True)
         return
-    lines = supervisor.tail(inst.id, lines=40)
-    text = "<b>Логи (последние 40 строк)</b>\n\n<pre>"
-    text += "\n".join(lines) if lines else "Логов пока нет"
-    text += "</pre>"
+    import html as _html
+
+    lines = supervisor.tail(inst.id, lines=80)
+    body = "\n".join(lines) if lines else "Логов пока нет"
+    text = (
+        "<b>Логи (последние 80 строк)</b>\n\n<pre>"
+        + _html.escape(body)
+        + "</pre>"
+    )
     if cb.message:
         await cb.message.answer(
             text,
