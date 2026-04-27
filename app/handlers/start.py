@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart, CommandObject
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -38,25 +39,28 @@ def _ensure_assets() -> Path:
 async def _greeting_text(session: AsyncSession, user: User) -> str:
     subs = await subs_repo.list_for_user(session, user.id)
     free_card = await free_cardinal_slots(session)
+    name = (user.first_name or "").strip() or "друг"
     lines = [
-        "<b>MI HOST</b>",
-        "<i>хостинг FunPay Cardinal · 40 ₽ / 30 дней</i>",
+        f"<b>Привет, {name}!</b>",
         "",
-        f"Свободных серверов: <b>{free_card}</b>",
+        "<b>MI HOST</b> — аренда FunPay Cardinal под ключ.",
+        f"<i>{settings.price_cardinal_rub} ₽ / 30 дней · авто-запуск · авто-рестарт</i>",
         "",
-        f"<b>{user.first_name or 'юзер'}</b> · id <code>{user.id}</code>",
+        f"Свободных серверов сейчас: <b>{free_card}</b>",
     ]
     active_subs = [s for s in subs if s.expires_at > now_utc()]
     if active_subs:
         lines.append("")
-        lines.append("<b>Активные подписки</b>")
+        lines.append("<b>Твои подписки</b>")
         for s in active_subs:
             lines.append(
                 f"  · {s.product.value} — до <code>{fmt_msk(s.expires_at)}</code>"
             )
+        lines.append("")
+        lines.append("<i>Открой «Мои серверы», чтобы управлять.</i>")
     else:
         lines.append("")
-        lines.append("<i>Активных подписок нет — нажми «Купить сервер».</i>")
+        lines.append("<i>Пока нет активных подписок — жми «Купить сервер».</i>")
     return "\n".join(lines)
 
 
@@ -116,20 +120,39 @@ async def cmd_support(msg: Message) -> None:
 
 
 @router.callback_query(F.data == "menu")
-async def cb_menu(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+async def cb_menu(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+) -> None:
+    """Return to main menu — always re-render with the banner image.
+
+    Try editing the existing photo caption first (cheap, no flicker). If the
+    source message wasn't a photo (e.g. user came from a text-only screen),
+    drop it and send a fresh photo message so the banner is always visible.
+    Also clears any in-flight FSM wizard — «В меню» is an escape hatch.
+    """
+    await state.clear()
     if cb.message:
         text = await _greeting_text(session, user)
         admin = await is_admin(session, user.id)
+        edited = False
         try:
             await cb.message.edit_caption(
                 caption=text,
                 parse_mode="HTML",
                 reply_markup=main_menu(is_admin=admin),
             )
+            edited = True
         except Exception:
-            await cb.message.answer(
-                text, parse_mode="HTML", reply_markup=main_menu(is_admin=admin)
-            )
+            pass
+        if not edited:
+            try:
+                await cb.message.delete()
+            except Exception:
+                pass
+            await _send_menu(cb.message, session, user)
     await cb.answer()
 
 

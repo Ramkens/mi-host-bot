@@ -42,6 +42,10 @@ _FORWARD_ADDS = (
 
 
 async def init_db() -> None:
+    # FSM persistence table (Postgres/SQLite-compatible DDL).
+    from app.services.fsm_storage import ensure_fsm_table
+
+    await ensure_fsm_table()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Best-effort cleanup of legacy columns/tables + forward-add of
