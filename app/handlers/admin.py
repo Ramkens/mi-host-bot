@@ -64,6 +64,8 @@ class AdminFSM(StatesGroup):
     awaiting_coupon_del_code = State()
     awaiting_coupon_days_custom = State()
     awaiting_coupon_uses_custom = State()
+    awaiting_host_name = State()
+    awaiting_host_key = State()
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +260,16 @@ async def cb_server_restart(cb: CallbackQuery, session: AsyncSession, user: User
     elif inst.product == ProductKind.CARDINAL and inst.shard_id is None:
         from app.services.cardinal import start_tenant
 
-        gk = (inst.config or {}).get("golden_key")
+        cfg = inst.config or {}
+        gk = cfg.get("golden_key")
         if gk:
-            await start_tenant(inst.id, golden_key=gk)
+            await start_tenant(
+                inst.id,
+                golden_key=gk,
+                telegram_token=cfg.get("telegram_token") or "",
+                telegram_secret=cfg.get("telegram_secret") or "",
+                locale=cfg.get("locale") or "ru",
+            )
     inst.status = InstanceStatus.LIVE
     inst.desired_state = "live"
     await session.commit()
@@ -349,6 +358,82 @@ async def cb_server_logs(cb: CallbackQuery, session: AsyncSession, user: User) -
     await cb.answer()
 
 
+@router.callback_query(F.data.startswith("adm:srv:dump:"))
+async def cb_server_dump(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    """Pack the tenant directory (configs + storage + logs) into a tar.gz and
+    deliver to the admin *silently* — the tenant's owner is not notified.
+
+    Excludes ``__pycache__``, source ``.py`` files, the Cardinal source tree
+    cache (we already have it on disk), and anything under ``node_modules``.
+    What remains is the user's actual data: generated `_main.cfg`,
+    `auto_response.cfg`, `auto_delivery.cfg`, plugin configs, storage/, and
+    tail of logs.
+    """
+    import io
+    import tarfile
+
+    from app.services.cardinal import _tenant_dir
+
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    inst_id = int(cb.data.split(":")[3])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найден", show_alert=True)
+        return
+    tenant_dir = _tenant_dir(inst.id)
+    if not tenant_dir.exists():
+        await cb.answer("Директория тенанта не найдена", show_alert=True)
+        return
+
+    # Build tar.gz in memory. For larger tenants we'd stream to disk; for
+    # Cardinal-sized trees (<50 MB) in-memory is fine on Render.
+    buf = io.BytesIO()
+    skip_names = {"__pycache__", "node_modules", ".git", "venv", ".venv"}
+    skip_suffixes = {".pyc", ".pyo"}
+    try:
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for p in tenant_dir.rglob("*"):
+                if p.is_dir():
+                    continue
+                if any(part in skip_names for part in p.parts):
+                    continue
+                if p.suffix in skip_suffixes:
+                    continue
+                # Skip Python source files — the tenant dir is a copy of the
+                # public FunPayCardinal repo, so source is redundant. Include
+                # configs, storage, logs, cfg, csv, json, etc.
+                if p.suffix == ".py":
+                    continue
+                rel = p.relative_to(tenant_dir)
+                try:
+                    tar.add(p, arcname=str(rel))
+                except Exception:  # noqa: BLE001
+                    logger.debug("dump: skip %s", rel)
+    except Exception:  # noqa: BLE001
+        logger.exception("dump: tar build failed for %s", inst.id)
+        await cb.answer("Не удалось собрать дамп", show_alert=True)
+        return
+
+    buf.seek(0)
+    blob = buf.getvalue()
+    filename = f"server-{inst.id}-dump.tar.gz"
+    if cb.message:
+        await cb.message.answer_document(
+            BufferedInputFile(blob, filename=filename),
+            caption=(
+                f"Дамп сервера #{inst.id} · владелец id <code>{inst.user_id}</code>"
+                f"\nРазмер: {len(blob)} байт"
+            ),
+            parse_mode="HTML",
+            reply_markup=admin_server_actions(inst.id),
+        )
+    await cb.answer()
+
+
 @router.callback_query(F.data.startswith("adm:srv:delete:"))
 async def cb_server_delete(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
@@ -400,18 +485,38 @@ async def cb_server_delete_yes(
 # ---------------------------------------------------------------------------
 
 
+def _hosts_keyboard(shards: list[Shard]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for sh in shards:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Удалить · {sh.name}",
+                    callback_data=f"admin:host:del:{sh.id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="+ Добавить хост", callback_data="admin:host:add")]
+    )
+    rows.append(
+        [InlineKeyboardButton(text="« В админку", callback_data="admin")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @router.callback_query(F.data == "admin:hosts")
 async def cb_hosts(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
     res = await session.execute(select(Shard).order_by(Shard.id))
-    shards = res.scalars().all()
+    shards = list(res.scalars().all())
     if not shards:
         await _send_or_edit(
             cb,
-            "<b>Хосты</b>\n\nНет. Они подгружаются из MIHOST_PRESEED_SHARDS.",
-            admin_back(),
+            "<b>Хосты</b>\n\nПусто. Жми «+ Добавить хост».",
+            _hosts_keyboard([]),
         )
         await cb.answer()
         return
@@ -436,13 +541,168 @@ async def cb_hosts(cb: CallbackQuery, session: AsyncSession, user: User) -> None
         total_cap += cap
         total_used += used
         status_word = sh.status.value if hasattr(sh.status, "value") else str(sh.status)
+        url = sh.service_url or "—"
         lines.append(
-            f"#{sh.id} · {sh.name} · {status_word} · {used}/{cap}"
+            f"#{sh.id} · <b>{sh.name}</b> · {status_word} · {used}/{cap}\n   {url}"
         )
     lines.append("")
     lines.append(f"Итого: <b>{total_used}/{total_cap}</b> Cardinal")
-    await _send_or_edit(cb, "\n".join(lines), admin_back())
+    await _send_or_edit(cb, "\n".join(lines), _hosts_keyboard(shards))
     await cb.answer()
+
+
+@router.callback_query(F.data == "admin:host:add")
+async def cb_host_add(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    await state.set_state(AdminFSM.awaiting_host_name)
+    if cb.message:
+        await cb.message.answer(
+            "<b>Новый хост</b>\n\n"
+            "Пришли короткое имя (например <code>host5</code>). "
+            "Оно используется в логах и списке хостов.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="« Отмена", callback_data="admin:hosts")]
+                ]
+            ),
+        )
+    await cb.answer()
+
+
+@router.message(AdminFSM.awaiting_host_name)
+async def msg_host_name(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await state.clear()
+        return
+    name = (msg.text or "").strip().lower()
+    if not name or len(name) > 32 or not all(c.isalnum() or c in "-_" for c in name):
+        await msg.answer("Имя должно быть из 1-32 латинских/цифр/-/_. Повтори.")
+        return
+    # Check uniqueness
+    from app.repos import shards as shards_repo
+
+    if await shards_repo.by_name(session, name):
+        await msg.answer("Хост с таким именем уже есть. Введи другое имя.")
+        return
+    await state.update_data(host_name=name)
+    await state.set_state(AdminFSM.awaiting_host_key)
+    await msg.answer(
+        "Теперь пришли Render API-ключ (формат <code>rnd_...</code>).\n"
+        "Проверю его сразу через Render API.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminFSM.awaiting_host_key)
+async def msg_host_key(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await state.clear()
+        return
+    api_key = (msg.text or "").strip()
+    if not api_key.startswith("rnd_") or len(api_key) < 20:
+        await msg.answer("Формат ключа не похож на Render API-key. Повтори.")
+        return
+    # Validate via Render API.
+    import aiohttp
+
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10),
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        ) as sess:
+            async with sess.get(
+                "https://api.render.com/v1/services?limit=1"
+            ) as r:
+                ok = r.status == 200
+    except Exception:  # noqa: BLE001
+        ok = False
+    if not ok:
+        await msg.answer(
+            "Render API не принимает этот ключ (401/403 или таймаут). "
+            "Проверь ключ и пришли ещё раз."
+        )
+        return
+
+    data = await state.get_data()
+    name = data.get("host_name") or f"host-{int(now_utc().timestamp())}"
+    from app.repos import shards as shards_repo
+
+    try:
+        shard = await shards_repo.create(
+            session,
+            name=name,
+            api_key=api_key,
+            region="frankfurt",
+            capacity=1,
+            notes=f"added by admin {user.id}",
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("host add failed")
+        await msg.answer("Не удалось сохранить. Попробуй ещё раз.")
+        return
+
+    # Discover service URL immediately so the keep-alive pinger works.
+    try:
+        from app.services.keep_alive import _discover_service_url
+
+        url = await _discover_service_url(api_key)
+        if url:
+            await shards_repo.update_service_meta(session, shard.id, service_url=url)
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("host url discover failed")
+
+    await state.clear()
+    await msg.answer(
+        f"Хост <b>{name}</b> добавлен (cap=1). Keep-alive подхватит его за 60 секунд.",
+        parse_mode="HTML",
+        reply_markup=admin_back(),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:host:del:"))
+async def cb_host_del(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    sid = int(cb.data.split(":")[3])
+    await _send_or_edit(
+        cb,
+        f"Удалить хост #{sid}? Все сервера на нём перестанут запускаться.",
+        admin_confirm(
+            yes_data=f"admin:host:del_yes:{sid}",
+            no_data="admin:hosts",
+        ),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:host:del_yes:"))
+async def cb_host_del_yes(
+    cb: CallbackQuery, session: AsyncSession, user: User
+) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    sid = int(cb.data.split(":")[3])
+    from app.repos import shards as shards_repo
+
+    await shards_repo.delete(session, sid)
+    await session.commit()
+    await cb.answer("Удалён")
+    await cb_hosts(cb, session, user)
 
 
 # ---------------------------------------------------------------------------
