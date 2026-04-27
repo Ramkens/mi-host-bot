@@ -8,13 +8,13 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ErrorEvent
 
 from app.config import settings
 from app.handlers import build_root_router
 from app.middlewares.db import DbMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
+from app.services.fsm_storage import PgStorage
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,8 @@ def bot_singleton() -> Bot:
 
 
 def build_dispatcher() -> Dispatcher:
-    dp = Dispatcher(storage=MemoryStorage())
+    # Persistent FSM: user wizard progress survives bot restarts / redeploys.
+    dp = Dispatcher(storage=PgStorage())
     db_mw = DbMiddleware()
     th_mw = ThrottleMiddleware()
     for observer in (
