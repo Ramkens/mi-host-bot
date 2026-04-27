@@ -48,7 +48,12 @@ class TenantSpec:
     cmd: list[str]
     env: dict[str, str] = field(default_factory=dict)
     autorestart: bool = True
-    rlimit_as_mb: int = 512  # virtual memory cap
+    # Virtual memory cap (0 = no RLIMIT_AS applied). Setting this to a hard
+    # number tends to produce phantom MemoryErrors in Cardinal's PollingThread
+    # because Python's VM footprint (threads, urllib3 pools, mmaps) easily
+    # exceeds the container's RSS limit. The container's own memory cgroup is
+    # sufficient; no per-process AS limit is needed.
+    rlimit_as_mb: int = 0
     rlimit_cpu_sec: Optional[int] = None  # off by default; long-running
     rlimit_nofile: int = 1024
 
@@ -141,9 +146,12 @@ class Supervisor:
             try:
                 # New session — easier to signal whole process group later.
                 os.setsid()
-                # Resource limits.
-                soft = spec.rlimit_as_mb * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_AS, (soft, soft))
+                # Resource limits. Only apply AS cap if explicitly > 0 —
+                # otherwise Python's virtual-memory footprint produces false
+                # MemoryErrors while the container still has plenty of RSS.
+                if spec.rlimit_as_mb and spec.rlimit_as_mb > 0:
+                    soft = spec.rlimit_as_mb * 1024 * 1024
+                    resource.setrlimit(resource.RLIMIT_AS, (soft, soft))
                 resource.setrlimit(
                     resource.RLIMIT_NOFILE, (spec.rlimit_nofile, spec.rlimit_nofile)
                 )
