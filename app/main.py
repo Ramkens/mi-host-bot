@@ -69,9 +69,16 @@ async def _restore_tenants() -> None:
     for inst in items:
         try:
             if inst.product == ProductKind.CARDINAL:
-                gk = (inst.config or {}).get("golden_key")
+                cfg = inst.config or {}
+                gk = cfg.get("golden_key")
                 if gk:
-                    await start_tenant(inst.id, golden_key=gk)
+                    await start_tenant(
+                        inst.id,
+                        golden_key=gk,
+                        telegram_token=cfg.get("telegram_token") or "",
+                        telegram_secret=cfg.get("telegram_secret") or "",
+                        locale=cfg.get("locale") or "ru",
+                    )
             else:
                 td = tenant_dir(inst.id)
                 if td.exists():
@@ -116,11 +123,18 @@ async def _tenant_watchdog() -> None:
                     continue
                 if inst.product != ProductKind.CARDINAL:
                     continue
-                gk = (inst.config or {}).get("golden_key")
+                cfg = inst.config or {}
+                gk = cfg.get("golden_key")
                 if not gk:
                     continue
                 try:
-                    await start_tenant(inst.id, golden_key=gk)
+                    await start_tenant(
+                        inst.id,
+                        golden_key=gk,
+                        telegram_token=cfg.get("telegram_token") or "",
+                        telegram_secret=cfg.get("telegram_secret") or "",
+                        locale=cfg.get("locale") or "ru",
+                    )
                     logger.info("watchdog: restarted tenant %s", inst.id)
                 except Exception:  # noqa: BLE001
                     logger.exception("watchdog start failed for %s", inst.id)

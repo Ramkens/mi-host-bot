@@ -37,7 +37,7 @@ except PermissionError:
     DEFAULT_DATA_DIR = Path.home() / ".mihost"
     DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-LOG_TAIL_LINES = 500
+LOG_TAIL_LINES = 5000
 
 
 @dataclass

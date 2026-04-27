@@ -31,17 +31,28 @@ _LEGACY_DROPS = (
 )
 
 
+# Idempotent schema additions for columns that the model has but pre-existing
+# DBs don't yet. SQLAlchemy create_all() doesn't run ALTER on existing tables.
+_FORWARD_ADDS = (
+    "ALTER TABLE IF EXISTS coupons ADD COLUMN IF NOT EXISTS max_uses INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE IF EXISTS coupons ADD COLUMN IF NOT EXISTS uses_count INTEGER NOT NULL DEFAULT 0",
+    # Backfill uses_count from legacy used_by column on first run.
+    "UPDATE coupons SET uses_count = 1 WHERE used_by IS NOT NULL AND uses_count = 0",
+)
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Best-effort cleanup of legacy columns/tables. We don't fail the boot
-        # if any of these statements raise (e.g. on SQLite where DROP COLUMN
-        # IF EXISTS is unsupported on older versions).
-        for stmt in _LEGACY_DROPS:
+        # Best-effort cleanup of legacy columns/tables + forward-add of
+        # newly-introduced columns. We don't fail the boot if any of these
+        # statements raise (e.g. on SQLite where IF NOT EXISTS / DROP COLUMN
+        # IF EXISTS aren't always supported).
+        for stmt in (*_LEGACY_DROPS, *_FORWARD_ADDS):
             try:
                 await conn.execute(text(stmt))
             except Exception as exc:  # noqa: BLE001
-                logger.debug("legacy cleanup skipped (%s): %s", stmt, exc)
+                logger.debug("schema cleanup skipped (%s): %s", stmt, exc)
     logger.info("DB schema ensured")
 
 

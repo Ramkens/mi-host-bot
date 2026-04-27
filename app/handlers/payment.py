@@ -18,7 +18,9 @@ from app.db.models import InstanceStatus, PaymentStatus, ProductKind, User
 from app.keyboards.main import (
     back_to_menu,
     buy_confirm,
+    buy_locale,
     buy_menu,
+    buy_skip,
     pay_buttons,
 )
 from app.repos import coupons as coupons_repo
@@ -35,6 +37,9 @@ router = Router(name="payment")
 
 class BuyFSM(StatesGroup):
     awaiting_golden_key = State()
+    awaiting_telegram_token = State()
+    awaiting_telegram_secret = State()
+    awaiting_locale = State()
     awaiting_coupon = State()
 
 
@@ -112,7 +117,119 @@ async def receive_golden_key(
         await msg.delete()
     except Exception:  # noqa: BLE001
         pass
-    await _show_summary(msg, state, session, user)
+    await _ask_telegram_token(msg, state)
+
+
+async def _ask_telegram_token(msg: Message, state: FSMContext) -> None:
+    await state.set_state(BuyFSM.awaiting_telegram_token)
+    await msg.answer(
+        "<b>Telegram-бот Cardinal</b> (необязательно)\n\n"
+        "Если хочешь управлять FunPay через своего Telegram-бота — пришли его "
+        "<code>BOT_TOKEN</code> от @BotFather.\n"
+        "Если не нужен — нажми «Пропустить».",
+        parse_mode="HTML",
+        reply_markup=buy_skip(),
+    )
+
+
+@router.message(BuyFSM.awaiting_telegram_token)
+async def receive_telegram_token(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    token = (msg.text or "").strip()
+    # BotFather tokens are roughly "<int>:<35-chars>".
+    if ":" not in token or len(token) < 30:
+        await msg.answer(
+            "Похоже на неверный токен. Пришли токен от @BotFather целиком "
+            "или нажми «Пропустить».",
+            reply_markup=buy_skip(),
+        )
+        return
+    await state.update_data(telegram_token=token)
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await _ask_telegram_secret(msg, state)
+
+
+async def _ask_telegram_secret(msg: Message, state: FSMContext) -> None:
+    await state.set_state(BuyFSM.awaiting_telegram_secret)
+    await msg.answer(
+        "<b>Пароль для входа в Cardinal-бота</b>\n\n"
+        "Придумай пароль (минимум 4 символа). Введёшь его в своём "
+        "Cardinal-боте при первом входе командой /init.\n"
+        "Можешь пропустить — задашь его позже в /init вручную.",
+        parse_mode="HTML",
+        reply_markup=buy_skip(),
+    )
+
+
+@router.message(BuyFSM.awaiting_telegram_secret)
+async def receive_telegram_secret(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    secret = (msg.text or "").strip()
+    if len(secret) < 4:
+        await msg.answer(
+            "Минимум 4 символа. Введи пароль или нажми «Пропустить».",
+            reply_markup=buy_skip(),
+        )
+        return
+    await state.update_data(telegram_secret=secret)
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await _ask_locale(msg, state)
+
+
+async def _ask_locale(msg: Message, state: FSMContext) -> None:
+    await state.set_state(BuyFSM.awaiting_locale)
+    await msg.answer(
+        "<b>Язык авто-сообщений Cardinal</b>",
+        parse_mode="HTML",
+        reply_markup=buy_locale(),
+    )
+
+
+@router.callback_query(F.data == "buy:skip")
+async def cb_buy_skip(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    cur = await state.get_state()
+    if cur == BuyFSM.awaiting_telegram_token.state:
+        await state.update_data(telegram_token="")
+        if cb.message:
+            await _ask_locale(cb.message, state)
+    elif cur == BuyFSM.awaiting_telegram_secret.state:
+        await state.update_data(telegram_secret="")
+        if cb.message:
+            await _ask_locale(cb.message, state)
+    elif cur == BuyFSM.awaiting_locale.state:
+        await state.update_data(locale="ru")
+        if cb.message:
+            await _show_summary(cb.message, state, session, user)
+    else:
+        await cb.answer()
+        return
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("buy:locale:"))
+async def cb_buy_locale(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not cb.data:
+        return
+    locale = cb.data.split(":")[2]
+    if locale not in {"ru", "en", "uk"}:
+        await cb.answer("Bad locale", show_alert=True)
+        return
+    await state.update_data(locale=locale)
+    if cb.message:
+        await _show_summary(cb.message, state, session, user)
+    await cb.answer()
 
 
 async def _show_summary(
@@ -123,9 +240,15 @@ async def _show_summary(
 ) -> None:
     data = await state.get_data()
     price = settings.price_cardinal_rub
+    tg_line = (
+        "Telegram-бот: подключён" if data.get("telegram_token") else "Telegram-бот: нет"
+    )
+    locale = (data.get("locale") or "ru").upper()
     details = (
         "FunPay Cardinal\n"
         f"golden_key: <code>***{data['golden_key'][-4:]}</code>\n"
+        f"{tg_line}\n"
+        f"Локаль: {locale}\n"
         f"Срок: 30 дней\n"
     )
     text = (
@@ -362,18 +485,27 @@ async def _provision_instance(
     gk = data.get("golden_key")
     if not gk:
         return
+    tg_token = (data.get("telegram_token") or "").strip()
+    tg_secret = (data.get("telegram_secret") or "").strip()
+    locale = (data.get("locale") or "ru").strip() or "ru"
+    cfg_payload = {
+        "golden_key": gk,
+        "telegram_token": tg_token,
+        "telegram_secret": tg_secret,
+        "locale": locale,
+    }
     # Reuse existing instance if any (idempotent renewal).
     existing = await inst_repo.list_for_user(session, user_id, ProductKind.CARDINAL)
     if existing:
         inst = existing[0]
-        inst.config = {**(inst.config or {}), "golden_key": gk}
+        inst.config = {**(inst.config or {}), **cfg_payload}
     else:
         inst = await inst_repo.create(
             session,
             user_id=user_id,
             product=ProductKind.CARDINAL,
             name=f"cardinal-{user_id}",
-            config={"golden_key": gk},
+            config=cfg_payload,
         )
     inst.status = InstanceStatus.DEPLOYING
     inst.desired_state = "live"
@@ -381,7 +513,13 @@ async def _provision_instance(
     # Master-side direct start (works when shard_id is None or master).
     if inst.shard_id is None:
         try:
-            await start_tenant(inst.id, golden_key=gk)
+            await start_tenant(
+                inst.id,
+                golden_key=gk,
+                telegram_token=tg_token,
+                telegram_secret=tg_secret,
+                locale=locale,
+            )
             inst.status = InstanceStatus.LIVE
             inst.actual_state = "live"
         except Exception:  # noqa: BLE001
