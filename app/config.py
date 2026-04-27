@@ -80,8 +80,9 @@ class Settings(BaseSettings):
     script_std_ram_mb: int = 130
     script_pro_ram_mb: int = 512
     cardinal_ram_mb: int = 200
-    # Capacity of THIS service for tenants (master keeps 1 host only by default).
-    master_capacity: int = 1
+    # Capacity of THIS service for tenants. Master runs the bot itself, so by
+    # default it does not accept user tenants — they go to dedicated shards.
+    master_capacity: int = 0
     # Days after subscription expiry before purging tenant data (with admin backup).
     purge_grace_days: int = 5
     # Tenant watchdog poll interval — keep small so dead tenants come back fast.
@@ -93,8 +94,9 @@ class Settings(BaseSettings):
     support_url: str = "tg://user?id=8341143485"
 
     # Optional JSON-encoded list of shards to auto-seed on first boot, e.g.:
-    #   MIHOST_PRESEED_SHARDS='[{"name":"host1","api_key":"rnd_...","capacity":4}]'
-    # If a shard with the given name already exists, it is skipped.
+    #   MIHOST_PRESEED_SHARDS='[{"name":"host1","api_key":"rnd_...","capacity":3}]'
+    # If a shard with the given name already exists, it is skipped (capacity is
+    # NOT updated retroactively — change it via /shards or DB if needed).
     mihost_preseed_shards: str = ""
 
     @field_validator("admin_ids")

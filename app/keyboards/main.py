@@ -149,6 +149,7 @@ def admin_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Статистика", callback_data="admin:stats")],
             [InlineKeyboardButton(text="Серверы (все)", callback_data="admin:servers")],
+            [InlineKeyboardButton(text="Хосты", callback_data="admin:hosts")],
             [InlineKeyboardButton(text="Юзер по id", callback_data="admin:user")],
             [InlineKeyboardButton(text="Купоны", callback_data="admin:coupons")],
             [InlineKeyboardButton(text="Рассылка", callback_data="admin:broadcast")],

@@ -165,10 +165,12 @@ async def _setup_bot_commands(bot: Bot) -> None:
 
 
 async def _preseed_shards() -> None:
-    """Auto-create shard rows from MIHOST_PRESEED_SHARDS env (JSON list).
+    """Auto-create / update shard rows from MIHOST_PRESEED_SHARDS env (JSON).
 
-    Format: [{"name": "host1", "api_key": "rnd_...", "capacity": 4}, ...]
-    Idempotent: existing shards (by name) are skipped.
+    Format: [{"name": "host1", "api_key": "rnd_...", "capacity": 3}, ...]
+    If a shard with the given name exists, its capacity / api_key / region
+    are updated (so editing the env actually propagates). Status is left
+    untouched.
     """
     raw = (settings.mihost_preseed_shards or "").strip()
     if not raw:
@@ -192,19 +194,33 @@ async def _preseed_shards() -> None:
             api_key = (item.get("api_key") or "").strip()
             if not name or not api_key:
                 continue
+            capacity = int(item.get("capacity", 3))
+            region = item.get("region", "frankfurt")
             existing = await shards_repo.by_name(s, name)
             if existing:
+                changed = False
+                if existing.capacity != capacity:
+                    existing.capacity = capacity
+                    changed = True
+                if existing.api_key != api_key:
+                    existing.api_key = api_key
+                    changed = True
+                if existing.region != region:
+                    existing.region = region
+                    changed = True
+                if changed:
+                    logger.info("updated shard %s (cap=%s)", name, capacity)
                 continue
             try:
                 await shards_repo.create(
                     s,
                     name=name,
                     api_key=api_key,
-                    region=item.get("region", "frankfurt"),
-                    capacity=int(item.get("capacity", 4)),
+                    region=region,
+                    capacity=capacity,
                     notes=item.get("notes"),
                 )
-                logger.info("preseeded shard %s", name)
+                logger.info("preseeded shard %s (cap=%s)", name, capacity)
             except Exception:  # noqa: BLE001
                 logger.exception("failed to preseed shard %s", name)
         await s.commit()
@@ -261,6 +277,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Auto-seed shards from MIHOST_PRESEED_SHARDS env (idempotent).
     await _preseed_shards()
+
+    # Pre-clone FunPayCardinal so first tenant doesn't pay clone latency.
+    async def _prewarm_cardinal() -> None:
+        try:
+            from app.services.cardinal import ensure_cardinal_cache
+
+            await ensure_cardinal_cache()
+            logger.info("Cardinal cache pre-warmed")
+        except Exception:  # noqa: BLE001
+            logger.exception("Cardinal pre-warm failed")
+
+    asyncio.create_task(_prewarm_cardinal())
 
     # Restore tenants in the background. (Only for tenants assigned to master;
     # shard-assigned tenants are restored by the worker on their shard.)
