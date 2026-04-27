@@ -42,6 +42,7 @@ from app.repos import logs as logs_repo
 from app.repos import subscriptions as subs_repo
 from app.repos import users as users_repo
 from app.services.admin import is_admin, stats_dashboard
+from app.services.slots import free_cardinal_slots
 from app.services.supervisor import supervisor
 from app.utils.time import fmt_msk, now_utc
 
@@ -118,6 +119,7 @@ async def cb_stats(cb: CallbackQuery, session: AsyncSession, user: User) -> None
         await cb.answer("Только для админа", show_alert=True)
         return
     s = await stats_dashboard(session)
+    free = await free_cardinal_slots(session)
     text = (
         "<b>Статистика</b>\n\n"
         f"Юзеров всего: <b>{s['users_total']}</b>\n"
@@ -126,7 +128,8 @@ async def cb_stats(cb: CallbackQuery, session: AsyncSession, user: User) -> None
         f"Активных подписок: <b>{s['active_subs']}</b>\n"
         f"Конверсия: <b>{s['conversion_pct']}%</b>\n\n"
         f"Выручка за 30 дней: <b>{s['revenue_30d_rub']} ₽</b>\n"
-        f"Всего: <b>{s['revenue_total_rub']} ₽</b>"
+        f"Всего: <b>{s['revenue_total_rub']} ₽</b>\n\n"
+        f"Свободных слотов Cardinal: <b>{free}</b>"
     )
     await _send_or_edit(cb, text, admin_back())
     await cb.answer()
@@ -333,6 +336,56 @@ async def cb_server_delete_yes(
     await session.commit()
     await cb.answer("Удалено")
     await cb_servers(cb, session, user)
+
+
+# ---------------------------------------------------------------------------
+# Hosts (shards) view
+# ---------------------------------------------------------------------------
+
+
+@router.callback_query(F.data == "admin:hosts")
+async def cb_hosts(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    res = await session.execute(select(Shard).order_by(Shard.id))
+    shards = res.scalars().all()
+    if not shards:
+        await _send_or_edit(
+            cb,
+            "<b>Хосты</b>\n\nНет. Они подгружаются из MIHOST_PRESEED_SHARDS.",
+            admin_back(),
+        )
+        await cb.answer()
+        return
+    # Count live cardinals per shard
+    res = await session.execute(
+        select(Instance.shard_id, Instance.id).where(
+            Instance.product == ProductKind.CARDINAL,
+            Instance.status == InstanceStatus.LIVE,
+        )
+    )
+    counts: dict[int, int] = {}
+    for sh_id, _ in res.all():
+        if sh_id is None:
+            continue
+        counts[sh_id] = counts.get(sh_id, 0) + 1
+    lines = ["<b>Хосты</b>", ""]
+    total_cap = 0
+    total_used = 0
+    for sh in shards:
+        used = counts.get(sh.id, 0)
+        cap = sh.capacity
+        total_cap += cap
+        total_used += used
+        status_word = sh.status.value if hasattr(sh.status, "value") else str(sh.status)
+        lines.append(
+            f"#{sh.id} · {sh.name} · {status_word} · {used}/{cap}"
+        )
+    lines.append("")
+    lines.append(f"Итого: <b>{total_used}/{total_cap}</b> Cardinal")
+    await _send_or_edit(cb, "\n".join(lines), admin_back())
+    await cb.answer()
 
 
 # ---------------------------------------------------------------------------

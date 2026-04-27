@@ -19,7 +19,7 @@ from app.config import settings
 from app.db.base import SessionLocal
 from app.db.models import Instance, ProductKind, Shard
 from app.repos import shards as shards_repo
-from app.services.cardinal import start_tenant
+from app.services.cardinal import ensure_cardinal_cache, start_tenant
 from app.services.script_host import tenant_dir
 from app.services.supervisor import TenantSpec, supervisor
 from app.utils.time import now_utc
@@ -141,6 +141,13 @@ async def run_worker_forever() -> None:
             break
         logger.info("[shard_worker] no shard row found yet, retrying…")
         await asyncio.sleep(15)
+
+    # Pre-clone Cardinal repo so first tenant doesn't pay clone latency.
+    try:
+        await ensure_cardinal_cache()
+        logger.info("[shard_worker] Cardinal cache ready")
+    except Exception:  # noqa: BLE001
+        logger.exception("[shard_worker] failed to prewarm Cardinal cache")
 
     while True:
         try:
