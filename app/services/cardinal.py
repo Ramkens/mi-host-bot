@@ -195,9 +195,16 @@ if cfg_path.exists() and key:
     with cfg_path.open('w', encoding='utf-8') as f:
         cp.write(f, space_around_delimiters=True)
 
-sys.argv = ['main.py']
+tenant_dir = Path(__file__).parent.resolve()
+os.chdir(tenant_dir)
+main_py = tenant_dir / 'main.py'
+sys.argv = [str(main_py)]
+# Make `import X` work for Cardinal's sibling packages (tg_bot/, FunPayAPI/...)
+sys.path.insert(0, str(tenant_dir))
 try:
-    runpy.run_path('main.py', run_name='__main__')
+    # Pass the absolute path so Cardinal's main.py os.path.dirname(__file__)
+    # resolves to the tenant directory rather than ''.
+    runpy.run_path(str(main_py), run_name='__main__')
 except SystemExit:
     raise
 except Exception as exc:
