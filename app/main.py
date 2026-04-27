@@ -119,6 +119,9 @@ async def _tenant_watchdog() -> None:
                 )
                 items = list(res.scalars())
             for inst in items:
+                # Skip tenants that the user/admin explicitly stopped.
+                if inst.desired_state == "stopped":
+                    continue
                 if supervisor.is_running(inst.id):
                     continue
                 if inst.product != ProductKind.CARDINAL:

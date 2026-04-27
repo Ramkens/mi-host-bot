@@ -319,6 +319,12 @@ def admin_server_actions(instance_id: int) -> InlineKeyboardMarkup:
                     callback_data=f"adm:srv:logs:{instance_id}",
                 ),
                 InlineKeyboardButton(
+                    text="Дамп",
+                    callback_data=f"adm:srv:dump:{instance_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="Удалить",
                     callback_data=f"adm:srv:delete:{instance_id}",
                 ),
