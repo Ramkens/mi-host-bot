@@ -126,7 +126,42 @@ async def _tenant_watchdog() -> None:
                     logger.exception("watchdog start failed for %s", inst.id)
         except Exception:  # noqa: BLE001
             logger.exception("tenant watchdog loop error")
-        await asyncio.sleep(30)
+        await asyncio.sleep(settings.watchdog_interval_seconds)
+
+
+async def _setup_bot_commands(bot: Bot) -> None:
+    """Register the BotFather command menu shown next to the message box."""
+    from aiogram.types import (
+        BotCommand,
+        BotCommandScopeAllPrivateChats,
+        BotCommandScopeChat,
+    )
+
+    public = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="menu", description="Открыть меню"),
+        BotCommand(command="servers", description="Мои сервера"),
+        BotCommand(command="buy", description="Купить сервер"),
+        BotCommand(command="support", description="Поддержка"),
+    ]
+    admin_extra = [
+        BotCommand(command="admin", description="Админка"),
+        BotCommand(command="stats", description="Статистика"),
+        BotCommand(command="shards", description="Список шардов"),
+        BotCommand(command="coupons", description="Список купонов"),
+        BotCommand(command="create_coupon", description="Создать купон"),
+    ]
+    try:
+        await bot.set_my_commands(public, scope=BotCommandScopeAllPrivateChats())
+        for aid in settings.admin_ids_list:
+            try:
+                await bot.set_my_commands(
+                    public + admin_extra, scope=BotCommandScopeChat(chat_id=aid)
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("set_my_commands for admin %s skipped", aid)
+    except Exception:  # noqa: BLE001
+        logger.exception("set_my_commands failed")
 
 
 async def _preseed_shards() -> None:
@@ -220,6 +255,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     sched = setup_scheduler(bot)
     sched.start()
     app.state.scheduler = sched
+
+    # BotFather-style command menu (the «☰» icon next to the chat input).
+    await _setup_bot_commands(bot)
 
     # Auto-seed shards from MIHOST_PRESEED_SHARDS env (idempotent).
     await _preseed_shards()

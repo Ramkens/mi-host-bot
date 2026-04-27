@@ -37,6 +37,7 @@ class CardinalCfg(StatesGroup):
 
 # --- golden_key rotation -----------------------------------------------------
 
+
 @router.callback_query(F.data.startswith("inst:setkey:"))
 async def cb_setkey(
     cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
@@ -49,7 +50,7 @@ async def cb_setkey(
         await cb.answer("Не найдено", show_alert=True)
         return
     if inst.product != ProductKind.CARDINAL:
-        await cb.answer("Только для Cardinal-инстансов", show_alert=True)
+        await cb.answer("Только для Cardinal", show_alert=True)
         return
     await state.update_data(inst_id=inst_id)
     await state.set_state(CardinalCfg.awaiting_new_key)
@@ -92,13 +93,14 @@ async def receive_new_key(
     except Exception:  # noqa: BLE001
         pass
     await msg.answer(
-        f"▣ golden_key обновлён. Cardinal #{inst.id} перезапущен.",
-        reply_markup=instance_actions(inst.id, inst.product.value),
+        f"golden_key обновлён. Сервер #{inst.id} перезапущен.",
+        reply_markup=instance_actions(inst.id),
     )
     await state.clear()
 
 
 # --- _main.cfg / auto_response.cfg / auto_delivery.cfg upload ---------------
+
 
 def _cfg_starter(state_cls: State, prompt: str):
     """Build a callback handler that puts FSM into `state_cls` & sends prompt."""
@@ -114,7 +116,7 @@ def _cfg_starter(state_cls: State, prompt: str):
             await cb.answer("Не найдено", show_alert=True)
             return
         if inst.product != ProductKind.CARDINAL:
-            await cb.answer("Только для Cardinal-инстансов", show_alert=True)
+            await cb.answer("Только для Cardinal", show_alert=True)
             return
         await state.update_data(inst_id=inst_id)
         await state.set_state(state_cls)
@@ -129,8 +131,7 @@ cb_cfg_main = _cfg_starter(
     CardinalCfg.awaiting_main_cfg,
     (
         "Пришли файл <code>_main.cfg</code> (как .cfg-документ) ИЛИ его содержимое "
-        "одним сообщением. Формат — INI с разделителем <code>:</code>. Будут "
-        "переписаны все 9 секций.\n\n"
+        "одним сообщением. Формат — INI с разделителем <code>:</code>.\n\n"
         "/cancel — отмена."
     ),
 )
@@ -173,24 +174,23 @@ async def cb_cfg_show(
         await cb.answer("Конфиг ещё не создан", show_alert=True)
         return
     # Build a compact view (sensitive fields masked)
-    lines = [f"<b>_main.cfg · #{inst.id}</b>", ""]
+    lines = [f"<b>_main.cfg · сервер #{inst.id}</b>", ""]
     for sect, kv in sections.items():
         lines.append(f"<b>[{sect}]</b>")
         for k, v in kv.items():
-            if k in {"golden_key", "token", "secretKeyHash"}:
+            if k in {"golden_key", "token", "secretKeyHash", "password"}:
                 v = (v[:6] + "…") if v else "(empty)"
             lines.append(f"  {k} = {v}")
         lines.append("")
     text = "\n".join(lines)
     if len(text) > 3500:
-        # If it's huge, send as a file instead.
         from app.services.cardinal_config import render_main_cfg
 
         raw = render_main_cfg(sections).encode("utf-8")
         if cb.message:
             await cb.message.answer_document(
                 BufferedInputFile(raw, filename=f"_main.cfg.{inst.id}.txt"),
-                caption=f"_main.cfg · инстанс #{inst.id}",
+                caption=f"_main.cfg · сервер #{inst.id}",
             )
     else:
         if cb.message:
@@ -201,10 +201,7 @@ async def cb_cfg_show(
 async def _read_cfg_payload(msg: Message) -> tuple[bool, str | None, str]:
     """Return (ok, content, error). Accepts either text or .cfg/.txt document."""
     if msg.document:
-        if (
-            msg.document.file_size
-            and msg.document.file_size > 256 * 1024
-        ):
+        if msg.document.file_size and msg.document.file_size > 256 * 1024:
             return False, None, "Файл больше 256 KB. Урежь, пожалуйста."
         try:
             f = await msg.bot.download(msg.document)
@@ -236,17 +233,17 @@ async def receive_main_cfg(
         return
     ok, content, err = await _read_cfg_payload(msg)
     if not ok or content is None:
-        await msg.answer(f"◇ {err}")
+        await msg.answer(err)
         return
     success, message = await write_user_main_cfg(inst.id, content)
     if success:
         await msg.answer(
-            f"▣ {message}\nCardinal #{inst.id} перезапущен.",
-            reply_markup=instance_actions(inst.id, inst.product.value),
+            f"{message}\nСервер #{inst.id} перезапущен.",
+            reply_markup=instance_actions(inst.id),
         )
         await state.clear()
     else:
-        await msg.answer(f"◇ {message}\nИсправь и пришли ещё раз, или /cancel.")
+        await msg.answer(f"{message}\nИсправь и пришли ещё раз, или /cancel.")
 
 
 @router.message(CardinalCfg.awaiting_resp_cfg)
@@ -268,14 +265,12 @@ async def receive_resp_cfg(
         return
     ok, content, err = await _read_cfg_payload(msg)
     if not ok or content is None:
-        await msg.answer(f"◇ {err}")
+        await msg.answer(err)
         return
     success, message = await write_user_aux_cfg(inst.id, "auto_response.cfg", content)
     await msg.answer(
-        f"{'▣' if success else '◇'} {message}",
-        reply_markup=instance_actions(inst.id, inst.product.value)
-        if success
-        else None,
+        message,
+        reply_markup=instance_actions(inst.id) if success else None,
     )
     if success:
         await state.clear()
@@ -300,14 +295,12 @@ async def receive_deliv_cfg(
         return
     ok, content, err = await _read_cfg_payload(msg)
     if not ok or content is None:
-        await msg.answer(f"◇ {err}")
+        await msg.answer(err)
         return
     success, message = await write_user_aux_cfg(inst.id, "auto_delivery.cfg", content)
     await msg.answer(
-        f"{'▣' if success else '◇'} {message}",
-        reply_markup=instance_actions(inst.id, inst.product.value)
-        if success
-        else None,
+        message,
+        reply_markup=instance_actions(inst.id) if success else None,
     )
     if success:
         await state.clear()

@@ -17,7 +17,6 @@ async def get_or_create(
     username: Optional[str] = None,
     first_name: Optional[str] = None,
     language_code: Optional[str] = None,
-    referrer_id: Optional[int] = None,
 ) -> tuple[User, bool]:
     user = await session.get(User, user_id)
     created = False
@@ -27,7 +26,6 @@ async def get_or_create(
             username=username,
             first_name=first_name,
             language_code=language_code,
-            referrer_id=referrer_id if referrer_id != user_id else None,
         )
         session.add(user)
         await session.flush()
@@ -61,23 +59,6 @@ async def block(session: AsyncSession, user_id: int, value: bool = True) -> None
     await session.execute(
         update(User).where(User.id == user_id).values(is_blocked=value)
     )
-
-
-async def add_xp(session: AsyncSession, user_id: int, xp: int) -> None:
-    user = await session.get(User, user_id)
-    if not user:
-        return
-    user.xp += xp
-    new_level = 1 + user.xp // 100
-    if new_level > user.level:
-        user.level = new_level
-
-
-async def add_coins(session: AsyncSession, user_id: int, coins: int) -> None:
-    user = await session.get(User, user_id)
-    if not user:
-        return
-    user.coins = max(0, user.coins + coins)
 
 
 async def total_users(session: AsyncSession) -> int:

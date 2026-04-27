@@ -1,22 +1,37 @@
 """Default Mi Host config for FunPay Cardinal tenants.
 
 Cardinal expects ``configs/_main.cfg`` to exist before ``main.py`` runs;
-otherwise it drops into an interactive ``first_setup()`` (input prompts),
-which obviously cannot work inside a managed subprocess.
-
-We pre-generate a fully-valid ``_main.cfg`` with friendly Mi Host defaults
-(autoRaise + autoResponse on, cute greeting / order-confirm / 5-star
-review-reply texts pre-filled) so a buyer gets a working shop the moment
-they paste their golden_key. Everything is overridable via the
-``Залить _main.cfg`` button.
+otherwise it drops into an interactive ``first_setup()`` which cannot work
+inside a managed subprocess. We pre-generate a fully-valid ``_main.cfg`` so
+buyers get a working shop the moment they paste their golden_key.
 
 Format quirks (must match Cardinal's ``configparser.ConfigParser`` setup
 in ``Utils/config_loader.py::create_config_obj``):
+
 * delimiter is ``:`` not ``=``
 * ``optionxform = str`` — keys are case-sensitive
 * ``interpolation=None`` — no ``%`` parsing
 * multi-line values are supported via continuation lines indented with
   whitespace; ConfigParser handles serialization+reparse round-trip.
+
+The schema we emit covers every key Cardinal's validator checks
+(``Utils/config_loader.py::load_main_config``):
+
+* ``FunPay``: golden_key, user_agent, autoRaise, autoResponse, autoDelivery,
+  multiDelivery, autoRestore, autoDisable, oldMsgGetMode,
+  keepSentMessagesUnread, locale
+* ``Telegram``: enabled, token, secretKeyHash, blockLogin
+* ``BlockList``: blockDelivery, blockResponse, blockNewMessageNotification,
+  blockNewOrderNotification, blockCommandNotification
+* ``NewMessageView``: includeMyMessages, includeFPMessages, includeBotMessages,
+  notifyOnlyMyMessages, notifyOnlyFPMessages, notifyOnlyBotMessages,
+  showImageName
+* ``Greetings``: ignoreSystemMessages, onlyNewChats, sendGreetings,
+  greetingsText, greetingsCooldown
+* ``OrderConfirm``: watermark, sendReply, replyText
+* ``ReviewReply``: star{1..5}Reply, star{1..5}ReplyText
+* ``Proxy``: enable, ip, port, login, password, check
+* ``Other``: watermark, requestsDelay, language
 """
 from __future__ import annotations
 
@@ -37,83 +52,22 @@ _DEFAULT_USER_AGENT = (
     "Chrome/109.0.0.0 Safari/537.36"
 )
 
-# --- Friendly defaults (cat-themed shop) -------------------------------------
-# The user supplied an example _main.cfg from a real shop; we adopt its texts
-# as Mi Host's out-of-the-box defaults. New buyers get a working autoresponder
-# without having to write a single line of config.
+# Plain, emoji-free defaults. Buyers can change anything via the
+# «Загрузить _main.cfg» / «Залить auto_response.cfg» buttons.
 
 _DEFAULT_GREETINGS_TEXT = (
-    "Мяу, $username  🐾\n"
-    "\n"
-    "Добро пожаловать в лавку!\n"
-    "Сегодня $date_text — отличный день для покупки! 😺\n"
-    "\n"
-    "Кот уже греется на солнышке и ждёт твой заказ~\n"
-    "Пиши или оплати, что нужно, и пушистый продавец мигом примчится! 🐈\n"
-    "\n"
-    "⚡ Быстрая (или же автоматическая) выдача\n"
-    "💎 Честные цены\n"
-    "🛡 Безопасная сделка\n"
-    "\n"
-    "Мррр... не стесняйся, кот добрый! 🐱"
+    "Привет, $username!\n"
+    "Спасибо, что зашёл в магазин.\n"
+    "Если что-то нужно — напиши, отвечу как только смогу.\n"
 )
 
 _DEFAULT_ORDER_CONFIRM_REPLY = (
-    "Мяу, $username! 🐱\n"
-    "\n"
-    "Надеюсь, товар понравился и кот не подвёл~ 😺\n"
-    "Если всё хорошо — оставь, пожалуйста, отзыв!\n"
-    "\n"
-    "🐟 Каждый отзыв очень важен для пушистого продавца!\n"
-    "\n"
-    "Спасибо, что выбрал кота! До новых встреч~ 🐾\n"
-    "$date"
+    "$username, спасибо за подтверждение заказа $order_id!\n"
+    "Если не сложно, оставь, пожалуйста, отзыв."
 )
 
-_DEFAULT_STAR1_REPLY = (
-    "Мяу... 😿 $username\n"
-    "\n"
-    "Кот очень огорчён и просит прощения!\n"
-    "Напиши пожалуйста что случилось —\n"
-    "кот разберётся и всё решит! 🐾\n"
-    "\n"
-    "ID чата: $chat_id"
-)
-
-_DEFAULT_STAR2_REPLY = (
-    "Мяу... $username 🐾\n"
-    "\n"
-    "Кот получил отзыв и очень переживает~\n"
-    "Пожалуйста, напиши в чём проблема —\n"
-    "кот всё исправит! 🐱\n"
-    "\n"
-    "ID чата: $chat_id"
-)
-
-_DEFAULT_STAR3_REPLY = (
-    "Мяу, $username... 🐾\n"
-    "\n"
-    "Кот немного расстроен, но не обижается~\n"
-    "Напиши, что пошло не так —\n"
-    "пушистый продавец хочет стать лучше! 🐱"
-)
-
-_DEFAULT_STAR4_REPLY = (
-    "Мррр~ $username, спасибо за отзыв! 🐾\n"
-    "\n"
-    "Кот старался изо всех лап! 🐱\n"
-    "Если что-то было не так — напиши,\n"
-    "кот обязательно исправится~ 😺"
-)
-
-_DEFAULT_STAR5_REPLY = (
-    "МЯУ! 🐾 $username, спасибо огромное!\n"
-    "\n"
-    "5 звёздочек — кот счастлив и мурчит\n"
-    "на максимальной громкости! 😸\n"
-    "\n"
-    "Приходи ещё — пушистый продавец\n"
-    "всегда рад! 🐱"
+_DEFAULT_STAR_REPLY = (
+    "$username, спасибо за отзыв!"
 )
 
 
@@ -125,17 +79,30 @@ def default_main_cfg(
     telegram_enabled: bool = False,
     secret_key_hash: str = _PLACEHOLDER_BCRYPT_HASH,
     locale: str = "ru",
-    proxy: str = "",
+    proxy_ip: str = "",
+    proxy_port: str = "",
+    proxy_login: str = "",
+    proxy_password: str = "",
     auto_raise: bool = True,
     auto_response: bool = True,
-    auto_delivery: bool = False,
+    auto_delivery: bool = True,
     multi_delivery: bool = False,
-    auto_restore: bool = False,
-    auto_disable: bool = False,
+    auto_restore: bool = True,
+    auto_disable: bool = True,
+    greetings_text: str = "",
+    order_confirm_reply: str = "",
+    star_reply_text: str = "",
 ) -> dict[str, dict[str, str]]:
     """Build the dict that maps 1:1 to ``configs/_main.cfg`` sections."""
-    b = lambda v: "1" if v else "0"
+
+    def b(v: bool) -> str:
+        return "1" if v else "0"
+
     ua = user_agent or _DEFAULT_USER_AGENT
+    proxy_enabled = bool(proxy_ip and proxy_port)
+    greet = greetings_text or _DEFAULT_GREETINGS_TEXT
+    order_reply = order_confirm_reply or _DEFAULT_ORDER_CONFIRM_REPLY
+    star = star_reply_text or _DEFAULT_STAR_REPLY
     return {
         "FunPay": {
             "golden_key": golden_key,
@@ -147,15 +114,14 @@ def default_main_cfg(
             "autoRestore": b(auto_restore),
             "autoDisable": b(auto_disable),
             "oldMsgGetMode": "0",
-            "locale": locale,
             "keepSentMessagesUnread": "0",
+            "locale": locale,
         },
         "Telegram": {
             "enabled": b(telegram_enabled),
             "token": telegram_token,
             "secretKeyHash": secret_key_hash,
             "blockLogin": "0",
-            "proxy": "",
         },
         "BlockList": {
             "blockDelivery": "0",
@@ -177,13 +143,13 @@ def default_main_cfg(
             "ignoreSystemMessages": "1",
             "onlyNewChats": "1",
             "sendGreetings": "1",
-            "greetingsText": _DEFAULT_GREETINGS_TEXT,
+            "greetingsText": greet,
             "greetingsCooldown": "2",
         },
         "OrderConfirm": {
             "watermark": "0",
             "sendReply": "1",
-            "replyText": _DEFAULT_ORDER_CONFIRM_REPLY,
+            "replyText": order_reply,
         },
         "ReviewReply": {
             "star1Reply": "1",
@@ -191,19 +157,26 @@ def default_main_cfg(
             "star3Reply": "1",
             "star4Reply": "1",
             "star5Reply": "1",
-            "star1ReplyText": _DEFAULT_STAR1_REPLY,
-            "star2ReplyText": _DEFAULT_STAR2_REPLY,
-            "star3ReplyText": _DEFAULT_STAR3_REPLY,
-            "star4ReplyText": _DEFAULT_STAR4_REPLY,
-            "star5ReplyText": _DEFAULT_STAR5_REPLY,
+            "star1ReplyText": star,
+            "star2ReplyText": star,
+            "star3ReplyText": star,
+            "star4ReplyText": star,
+            "star5ReplyText": star,
         },
         "Proxy": {
-            "enable": "1" if proxy else "0",
-            "proxy": proxy,
+            # Cardinal's validator requires ip/port/login/password/check; an
+            # `enable` flag is also kept for backward-compat with first_setup.py.
+            "enable": b(proxy_enabled),
+            "ip": proxy_ip,
+            "port": proxy_port,
+            "login": proxy_login,
+            "password": proxy_password,
             "check": "0",
         },
         "Other": {
-            "watermark": "🐦",
+            # Watermark prepended to every outgoing FunPay message. Empty by
+            # default — buyers can set their own brand via _main.cfg upload.
+            "watermark": "",
             "requestsDelay": "4",
             "language": locale,
         },

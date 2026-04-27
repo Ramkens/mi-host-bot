@@ -84,9 +84,8 @@ class Settings(BaseSettings):
     master_capacity: int = 1
     # Days after subscription expiry before purging tenant data (with admin backup).
     purge_grace_days: int = 5
-    minigame_cooldown_hours: int = 12
-    minigame_bonus_days: int = 1
-    referral_bonus_days: int = 3
+    # Tenant watchdog poll interval — keep small so dead tenants come back fast.
+    watchdog_interval_seconds: int = 10
     secret_key: str = "change_me_long_random"
 
     # Public Telegram URL of the support contact (used by the «Поддержка» button).
