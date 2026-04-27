@@ -235,18 +235,66 @@ async def start_tenant(
 
 
 async def update_golden_key(instance_id: int, golden_key: str) -> None:
-    """Update the key (preserving other config) and force a restart."""
+    """Backwards-compatible: only golden_key changed."""
+    await update_tenant_config(instance_id, golden_key=golden_key)
+
+
+async def update_tenant_config(
+    instance_id: int,
+    *,
+    golden_key: str | None = None,
+    telegram_token: str | None = None,
+    telegram_secret: str | None = None,
+    locale: str | None = None,
+) -> None:
+    """Update one or more tenant settings, rewrite ``_main.cfg`` and restart.
+
+    Existing values in ``configs/_main.cfg`` are preserved for any field
+    *not* passed (so user-uploaded customizations don't get blown away).
+    """
     tenant_dir = _tenant_dir(instance_id)
+    existing = read_main_cfg(instance_id) if tenant_dir.exists() else {}
+    funpay = existing.get("FunPay", {}) if existing else {}
+    telegram = existing.get("Telegram", {}) if existing else {}
+
+    eff_gk = golden_key if golden_key is not None else funpay.get("golden_key", "")
+    eff_token = (
+        telegram_token if telegram_token is not None else telegram.get("token", "")
+    )
+    eff_locale = locale if locale is not None else funpay.get("locale", "ru")
+    if telegram_secret is not None:
+        eff_secret = telegram_secret
+    else:
+        eff_secret = ""  # not stored; bcrypt hash is non-recoverable
+
     if not tenant_dir.exists():
-        await provision_tenant(instance_id, golden_key=golden_key)
-        await start_tenant(instance_id, golden_key=golden_key)
+        await provision_tenant(
+            instance_id,
+            golden_key=eff_gk,
+            telegram_token=eff_token,
+            telegram_secret=eff_secret,
+            locale=eff_locale,
+        )
+        await start_tenant(
+            instance_id,
+            golden_key=eff_gk,
+            telegram_token=eff_token,
+            telegram_secret=eff_secret,
+            locale=eff_locale,
+        )
         return
-    # Read existing config so we don't blow away user customizations.
-    overrides = read_main_cfg(instance_id)
-    _write_main_cfg(tenant_dir, golden_key=golden_key, overrides=overrides)
+
+    _write_main_cfg(
+        tenant_dir,
+        golden_key=eff_gk,
+        telegram_token=eff_token,
+        telegram_secret=eff_secret,
+        locale=eff_locale,
+        overrides=existing,
+    )
     state = supervisor.tenants.get(instance_id)
     if state:
-        state.spec.env["GOLDEN_KEY"] = golden_key
+        state.spec.env["GOLDEN_KEY"] = eff_gk
     await supervisor.restart(instance_id)
 
 

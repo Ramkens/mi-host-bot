@@ -881,7 +881,7 @@ async def cmd_add_admin(
         return
     arg = (command.args or "").strip()
     if not arg or not arg.isdigit():
-        await msg.answer("Использование: /addadmin <user_id>")
+        await msg.answer("Использование: /addadmin &lt;user_id&gt;")
         return
     target = await session.get(User, int(arg))
     if not target:
@@ -900,7 +900,7 @@ async def cmd_rm_admin(
         return
     arg = (command.args or "").strip()
     if not arg or not arg.isdigit():
-        await msg.answer("Использование: /rmadmin <user_id>")
+        await msg.answer("Использование: /rmadmin &lt;user_id&gt;")
         return
     target = await session.get(User, int(arg))
     if target:
@@ -922,7 +922,7 @@ async def cmd_create_coupon(
         return
     parts = (command.args or "").split()
     if not parts:
-        await msg.answer("Использование: /create_coupon <days> [uses=1]")
+        await msg.answer("Использование: /create_coupon &lt;days&gt; [uses=1]")
         return
     try:
         days = int(parts[0])

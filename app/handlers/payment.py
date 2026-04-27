@@ -17,10 +17,10 @@ from app.config import settings
 from app.db.models import InstanceStatus, PaymentStatus, ProductKind, User
 from app.keyboards.main import (
     back_to_menu,
+    buy_cancel,
     buy_confirm,
     buy_locale,
     buy_menu,
-    buy_skip,
     pay_buttons,
 )
 from app.repos import coupons as coupons_repo
@@ -123,12 +123,13 @@ async def receive_golden_key(
 async def _ask_telegram_token(msg: Message, state: FSMContext) -> None:
     await state.set_state(BuyFSM.awaiting_telegram_token)
     await msg.answer(
-        "<b>Telegram-бот Cardinal</b> (необязательно)\n\n"
-        "Если хочешь управлять FunPay через своего Telegram-бота — пришли его "
-        "<code>BOT_TOKEN</code> от @BotFather.\n"
-        "Если не нужен — нажми «Пропустить».",
+        "<b>Telegram-бот Cardinal</b>\n\n"
+        "Пришли токен своего Telegram-бота от @BotFather — через него "
+        "будешь управлять FunPay-магазином.\n\n"
+        "Нет бота? Открой @BotFather → /newbot → выбери имя → получи токен.\n"
+        "Формат: <code>123456789:ABC...</code>",
         parse_mode="HTML",
-        reply_markup=buy_skip(),
+        reply_markup=buy_cancel(),
     )
 
 
@@ -140,9 +141,10 @@ async def receive_telegram_token(
     # BotFather tokens are roughly "<int>:<35-chars>".
     if ":" not in token or len(token) < 30:
         await msg.answer(
-            "Похоже на неверный токен. Пришли токен от @BotFather целиком "
-            "или нажми «Пропустить».",
-            reply_markup=buy_skip(),
+            "Неверный токен. Пришли токен от @BotFather целиком "
+            "в формате <code>123456789:ABC...</code>.",
+            parse_mode="HTML",
+            reply_markup=buy_cancel(),
         )
         return
     await state.update_data(telegram_token=token)
@@ -156,12 +158,13 @@ async def receive_telegram_token(
 async def _ask_telegram_secret(msg: Message, state: FSMContext) -> None:
     await state.set_state(BuyFSM.awaiting_telegram_secret)
     await msg.answer(
-        "<b>Пароль для входа в Cardinal-бота</b>\n\n"
-        "Придумай пароль (минимум 4 символа). Введёшь его в своём "
-        "Cardinal-боте при первом входе командой /init.\n"
-        "Можешь пропустить — задашь его позже в /init вручную.",
+        "<b>Пароль доступа</b>\n\n"
+        "Придумай пароль (минимум 4 символа). Он нужен:\n"
+        "• в твоём Cardinal-боте при первом входе (команда /init);\n"
+        "• чтобы удалить свой сервер из этого бота.\n\n"
+        "<b>Запиши отдельно</b> — восстановить невозможно.",
         parse_mode="HTML",
-        reply_markup=buy_skip(),
+        reply_markup=buy_cancel(),
     )
 
 
@@ -172,8 +175,8 @@ async def receive_telegram_secret(
     secret = (msg.text or "").strip()
     if len(secret) < 4:
         await msg.answer(
-            "Минимум 4 символа. Введи пароль или нажми «Пропустить».",
-            reply_markup=buy_skip(),
+            "Минимум 4 символа. Введи пароль.",
+            reply_markup=buy_cancel(),
         )
         return
     await state.update_data(telegram_secret=secret)
@@ -191,29 +194,6 @@ async def _ask_locale(msg: Message, state: FSMContext) -> None:
         parse_mode="HTML",
         reply_markup=buy_locale(),
     )
-
-
-@router.callback_query(F.data == "buy:skip")
-async def cb_buy_skip(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    cur = await state.get_state()
-    if cur == BuyFSM.awaiting_telegram_token.state:
-        await state.update_data(telegram_token="")
-        if cb.message:
-            await _ask_locale(cb.message, state)
-    elif cur == BuyFSM.awaiting_telegram_secret.state:
-        await state.update_data(telegram_secret="")
-        if cb.message:
-            await _ask_locale(cb.message, state)
-    elif cur == BuyFSM.awaiting_locale.state:
-        await state.update_data(locale="ru")
-        if cb.message:
-            await _show_summary(cb.message, state, session, user)
-    else:
-        await cb.answer()
-        return
-    await cb.answer()
 
 
 @router.callback_query(F.data.startswith("buy:locale:"))
@@ -240,9 +220,7 @@ async def _show_summary(
 ) -> None:
     data = await state.get_data()
     price = settings.price_cardinal_rub
-    tg_line = (
-        "Telegram-бот: подключён" if data.get("telegram_token") else "Telegram-бот: нет"
-    )
+    tg_line = "Telegram-бот: подключён"
     locale = (data.get("locale") or "ru").upper()
     details = (
         "FunPay Cardinal\n"

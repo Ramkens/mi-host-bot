@@ -53,11 +53,10 @@ def buy_confirm() -> InlineKeyboardMarkup:
     )
 
 
-def buy_skip() -> InlineKeyboardMarkup:
-    """Skip an optional FSM step (Telegram token, secret, etc.)."""
+def buy_cancel() -> InlineKeyboardMarkup:
+    """Cancel an in-progress purchase wizard."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустить", callback_data="buy:skip")],
             [InlineKeyboardButton(text="« Отмена", callback_data="menu")],
         ]
     )
@@ -107,17 +106,96 @@ def instance_actions(instance_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="Настройки",
+                    callback_data=f"inst:settings:{instance_id}",
+                ),
+                InlineKeyboardButton(
+                    text="Конфиги Cardinal",
+                    callback_data=f"inst:cfg:menu:{instance_id}",
+                ),
+            ],
+            [InlineKeyboardButton(text="« К списку", callback_data="instances")],
+        ]
+    )
+
+
+def instance_settings(instance_id: int) -> InlineKeyboardMarkup:
+    """Подменю «Настройки сервера» — редактор каждого параметра."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
                     text="Сменить golden_key",
-                    callback_data=f"inst:setkey:{instance_id}",
+                    callback_data=f"inst:edit:gk:{instance_id}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Конфиги Cardinal",
-                    callback_data=f"inst:cfg:menu:{instance_id}",
+                    text="Сменить Telegram-бот токен",
+                    callback_data=f"inst:edit:tg:{instance_id}",
                 )
             ],
-            [InlineKeyboardButton(text="« К списку", callback_data="instances")],
+            [
+                InlineKeyboardButton(
+                    text="Сменить пароль доступа",
+                    callback_data=f"inst:edit:pw:{instance_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Сменить язык",
+                    callback_data=f"inst:edit:loc:{instance_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Удалить сервер",
+                    callback_data=f"inst:delete:{instance_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=f"inst:open:{instance_id}",
+                )
+            ],
+        ]
+    )
+
+
+def instance_locale_picker(instance_id: int) -> InlineKeyboardMarkup:
+    """Выбор языка при смене параметра locale."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Русский", callback_data=f"inst:setloc:{instance_id}:ru"
+                ),
+                InlineKeyboardButton(
+                    text="English", callback_data=f"inst:setloc:{instance_id}:en"
+                ),
+                InlineKeyboardButton(
+                    text="Українська", callback_data=f"inst:setloc:{instance_id}:uk"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад", callback_data=f"inst:settings:{instance_id}"
+                )
+            ],
+        ]
+    )
+
+
+def instance_edit_cancel(instance_id: int) -> InlineKeyboardMarkup:
+    """Кнопка отмены ввода нового значения параметра."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="« Отмена", callback_data=f"inst:settings:{instance_id}"
+                )
+            ]
         ]
     )
 
