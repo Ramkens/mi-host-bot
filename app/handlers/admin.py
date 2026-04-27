@@ -1,34 +1,49 @@
-"""Admin panel: stats, broadcast, add/remove admin, brand channel, post now."""
+"""Admin panel: stats, server management, users, coupons, broadcast.
+
+Designed to be small and focused — rotates around the inline menu
+(`admin_menu`). Heavy commands (export, shards inspection, ad-hoc grants)
+are still available as text commands for power users.
+"""
 from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Optional
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ProductKind, User
+from app.db.models import (
+    Coupon,
+    Instance,
+    InstanceStatus,
+    ProductKind,
+    Shard,
+    Subscription,
+    User,
+)
 from app.keyboards.main import (
     admin_back,
+    admin_confirm,
     admin_coupon_days,
-    admin_coupon_pick,
     admin_coupons_menu,
-    admin_export_menu,
     admin_menu,
-    admin_pick_days,
-    admin_pick_product,
-    admin_shards_menu,
-    admin_subs_menu,
-    back_to_menu,
+    admin_server_actions,
+    admin_user_actions,
 )
+from app.repos import coupons as coupons_repo
+from app.repos import instances as inst_repo
+from app.repos import logs as logs_repo
+from app.repos import subscriptions as subs_repo
 from app.repos import users as users_repo
 from app.services.admin import is_admin, stats_dashboard
-from app.services.channel import auto_brand, post_one
+from app.services.supervisor import supervisor
+from app.utils.time import fmt_msk, now_utc
 
 logger = logging.getLogger(__name__)
 router = Router(name="admin")
@@ -37,1103 +52,293 @@ router = Router(name="admin")
 class AdminFSM(StatesGroup):
     awaiting_broadcast = State()
     awaiting_new_admin = State()
-    # Sub flow: action ∈ {grant, add, remove, revoke}; product picked via buttons; user_id then days
-    awaiting_sub_user_id = State()
-    awaiting_sub_custom_days = State()
-    awaiting_revoke_user_id = State()
-    # User-info flow
-    awaiting_userinfo_id = State()
-    # Coupon flow
+    awaiting_user_id = State()
     awaiting_coupon_del_code = State()
-    # Shard flow
-    awaiting_shard_add = State()
-    awaiting_shard_toggle = State()
-    awaiting_shard_drop = State()
-    # Export flow
-    awaiting_export_user_id = State()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 async def _require_admin(session: AsyncSession, user: User) -> bool:
     return await is_admin(session, user.id)
 
 
-@router.callback_query(F.data == "admin")
-async def cb_admin(
-    cb: CallbackQuery, session: AsyncSession, user: User
+async def _send_or_edit(
+    cb: CallbackQuery, text: str, reply_markup=None
 ) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
+    if not cb.message:
         return
-    text = "<b>Админка Mi Host</b>\nВыберите действие:"
-    if cb.message:
+    try:
+        await cb.message.edit_caption(
+            caption=text, parse_mode="HTML", reply_markup=reply_markup
+        )
+    except Exception:
         try:
-            await cb.message.edit_caption(
-                caption=text, parse_mode="HTML", reply_markup=admin_menu()
+            await cb.message.edit_text(
+                text, parse_mode="HTML", reply_markup=reply_markup
             )
         except Exception:
             await cb.message.answer(
-                text, parse_mode="HTML", reply_markup=admin_menu()
+                text, parse_mode="HTML", reply_markup=reply_markup
             )
+
+
+# ---------------------------------------------------------------------------
+# /admin entry
+# ---------------------------------------------------------------------------
+
+
+@router.callback_query(F.data == "admin")
+async def cb_admin(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    text = "<b>Админка</b>\n\nВыбери раздел."
+    await _send_or_edit(cb, text, admin_menu())
     await cb.answer()
 
 
+@router.message(Command("admin"))
+async def cmd_admin(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await is_admin(session, user.id):
+        return
+    await msg.answer("<b>Админка</b>", parse_mode="HTML", reply_markup=admin_menu())
+
+
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+
 @router.callback_query(F.data == "admin:stats")
-async def cb_stats(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
+async def cb_stats(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
     s = await stats_dashboard(session)
     text = (
         "<b>Статистика</b>\n\n"
-        f"Юзеров: <b>{s['users_total']}</b> (24h: {s['users_active_24h']})\n"
-        f"Платящих: <b>{s['paying_users']}</b> (конверсия {s['conversion_pct']}%)\n"
-        f"Активных подписок: <b>{s['active_subs']}</b>\n\n"
-        f"Доход всего: <b>{s['revenue_total_rub']} ₽</b>\n"
-        f"Доход 30д: <b>{s['revenue_30d_rub']} ₽</b>"
+        f"Юзеров всего: <b>{s['users_total']}</b>\n"
+        f"Активных за 24ч: <b>{s['users_active_24h']}</b>\n"
+        f"Платящих: <b>{s['paying_users']}</b>\n"
+        f"Активных подписок: <b>{s['active_subs']}</b>\n"
+        f"Конверсия: <b>{s['conversion_pct']}%</b>\n\n"
+        f"Выручка за 30 дней: <b>{s['revenue_30d_rub']} ₽</b>\n"
+        f"Всего: <b>{s['revenue_total_rub']} ₽</b>"
     )
-    if cb.message:
-        await cb.message.answer(text, parse_mode="HTML", reply_markup=admin_menu())
-    await cb.answer()
-
-
-@router.callback_query(F.data == "admin:broadcast")
-async def cb_broadcast(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    await state.set_state(AdminFSM.awaiting_broadcast)
-    if cb.message:
-        await cb.message.answer(
-            "Пришлите текст рассылки одним сообщением.\nДля отмены: /cancel"
-        )
-    await cb.answer()
-
-
-@router.message(AdminFSM.awaiting_broadcast)
-async def do_broadcast(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
-        return
-    if msg.text == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено")
-        return
-    text = msg.html_text or msg.text or ""
-    if not text.strip():
-        await msg.answer("Пустое сообщение, отмена.")
-        await state.clear()
-        return
-    res = await session.execute(select(User.id).where(User.is_blocked.is_(False)))
-    ids = [r for (r,) in res.all()]
-    sent, failed = 0, 0
-    for uid in ids:
-        try:
-            await msg.bot.send_message(uid, text, parse_mode="HTML")
-            sent += 1
-            await asyncio.sleep(0.04)  # ~25 msg/s, well below TG limit
-        except Exception:
-            failed += 1
-    await msg.answer(f"Готово. Отправлено: {sent}, ошибок: {failed}")
-    await state.clear()
-
-
-@router.callback_query(F.data == "admin:add_admin")
-async def cb_add_admin(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    await state.set_state(AdminFSM.awaiting_new_admin)
-    if cb.message:
-        await cb.message.answer(
-            "Пришлите Telegram ID нового админа одним сообщением.\nДля отмены: /cancel"
-        )
-    await cb.answer()
-
-
-@router.message(Command("addadmin"))
-async def cmd_add_admin(
-    msg: Message, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 2 or not parts[1].isdigit():
-        await msg.answer("Использование: /addadmin <user_id>")
-        return
-    target_id = int(parts[1])
-    target = await users_repo.by_id(session, target_id)
-    if not target:
-        # Pre-create the user record so the flag sticks even before they /start.
-        target = User(id=target_id, is_admin=True)
-        session.add(target)
-    else:
-        await users_repo.set_admin(session, target_id, True)
-    await msg.answer(f"✓ Админ {target_id} добавлен.")
-
-
-@router.message(Command("rmadmin"))
-async def cmd_rm_admin(
-    msg: Message, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 2 or not parts[1].isdigit():
-        await msg.answer("Использование: /rmadmin <user_id>")
-        return
-    target_id = int(parts[1])
-    if target_id == user.id:
-        await msg.answer("Нельзя снять админку с себя.")
-        return
-    await users_repo.set_admin(session, target_id, False)
-    await msg.answer(f"✓ {target_id} больше не админ.")
-
-
-@router.message(AdminFSM.awaiting_new_admin)
-async def receive_new_admin(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if msg.text == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено")
-        return
-    text = (msg.text or "").strip()
-    if not text.isdigit():
-        await msg.answer("ID должен быть числом.")
-        return
-    target_id = int(text)
-    target = await users_repo.by_id(session, target_id)
-    if not target:
-        target = User(id=target_id, is_admin=True)
-        session.add(target)
-    else:
-        await users_repo.set_admin(session, target_id, True)
-    await msg.answer(f"✓ Админ {target_id} добавлен.")
-    await state.clear()
-
-
-@router.callback_query(F.data == "admin:brand")
-async def cb_brand(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    ok = await auto_brand(cb.bot)
-    if cb.message:
-        await cb.message.answer(
-            "✓ Канал брендирован" if ok else "Канал не настроен (CHANNEL_ID пуст).",
-            reply_markup=back_to_menu(),
-        )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "admin:post_now")
-async def cb_post_now(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    mid = await post_one(cb.bot)
-    if cb.message:
-        await cb.message.answer(
-            f"✓ Опубликовано (msg_id={mid})" if mid else "Канал не настроен.",
-            reply_markup=back_to_menu(),
-        )
+    await _send_or_edit(cb, text, admin_back())
     await cb.answer()
 
 
 @router.message(Command("stats"))
 async def cmd_stats(msg: Message, session: AsyncSession, user: User) -> None:
-    if not await _require_admin(session, user):
+    if not await is_admin(session, user.id):
         return
     s = await stats_dashboard(session)
     await msg.answer(
-        f"Юзеров: {s['users_total']} | Платящих: {s['paying_users']} ({s['conversion_pct']}%)\n"
-        f"Активных подписок: {s['active_subs']}\n"
-        f"Доход всего: {s['revenue_total_rub']}₽ | 30д: {s['revenue_30d_rub']}₽"
-    )
-
-
-@router.message(Command("rotate_db"))
-async def cmd_rotate_db(msg: Message, session: AsyncSession, user: User) -> None:
-    """Force a Postgres rotation (admin only — for testing)."""
-    if not await _require_admin(session, user):
-        return
-    await msg.answer("⏳ Запускаю ротацию Postgres…")
-    from app.services.db_rotation import rotate_now
-
-    result = await rotate_now(msg.bot, force=True)
-    await msg.answer(f"<pre>{result}</pre>", parse_mode="HTML")
-
-
-# --- Sharding ---
-
-@router.message(Command("add_shard"))
-async def cmd_add_shard(msg: Message, session: AsyncSession, user: User) -> None:
-    """Register a new shard:  /add_shard <name> <render_api_key> [capacity]"""
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split(maxsplit=3)
-    if len(parts) < 3:
-        await msg.answer(
-            "Использование:\n<code>/add_shard &lt;name&gt; &lt;RENDER_API_KEY&gt; [capacity=4]</code>\n\n"
-            "После добавления бот сам создаст web-service в этом аккаунте.",
-            parse_mode="HTML",
-        )
-        return
-    name = parts[1].strip()
-    api_key = parts[2].strip()
-    capacity = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 4
-
-    from app.repos import shards as shards_repo
-    from app.services.render_api import RenderClient
-    from app.services.shard_provision import provision_worker
-
-    # Validate the API key first.
-    rc = RenderClient(api_key=api_key)
-    try:
-        owner_id = await rc.autodetect_owner()
-    except Exception as exc:  # noqa: BLE001
-        await msg.answer(f"❌ API key недействителен: <code>{exc}</code>", parse_mode="HTML")
-        return
-    if not owner_id:
-        await msg.answer("❌ Не нашёл owner у этого API key.")
-        return
-
-    existing = await shards_repo.by_name(session, name)
-    if existing:
-        await msg.answer(f"❌ Шард с именем <b>{name}</b> уже есть.", parse_mode="HTML")
-        return
-
-    shard = await shards_repo.create(
-        session,
-        name=name,
-        api_key=api_key,
-        owner_id=owner_id,
-        capacity=capacity,
-    )
-    await session.commit()
-
-    await msg.answer(
-        f"✅ Шард <b>{name}</b> зарегистрирован (id={shard.id}).\n"
-        f"Деплою воркер на этот аккаунт…",
-        parse_mode="HTML",
-    )
-    # Try to delete the original message so the API key disappears from chat.
-    try:
-        await msg.delete()
-    except Exception:  # noqa: BLE001
-        pass
-
-    result = await provision_worker(session, shard.id)
-    await session.commit()
-    if result.get("ok"):
-        await msg.answer(
-            f"🚀 Воркер деплоится: <code>{result.get('service_id')}</code>\n"
-            f"URL: {result.get('service_url')}\n\n"
-            "Жди ~3 минуты до первого heartbeat.",
-            parse_mode="HTML",
-        )
-    else:
-        await msg.answer(
-            f"⚠️ Не получилось задеплоить воркер: <code>{result.get('reason')}</code>",
-            parse_mode="HTML",
-        )
-
-
-@router.message(Command("shards"))
-async def cmd_shards(msg: Message, session: AsyncSession, user: User) -> None:
-    if not await _require_admin(session, user):
-        return
-    from app.repos import shards as shards_repo
-
-    rows = await shards_repo.all_(session)
-    occ = await shards_repo.occupancy(session)
-    if not rows:
-        await msg.answer("Шардов пока нет. Добавь через /add_shard.")
-        return
-    lines = ["<b>Шарды:</b>"]
-    for sh in rows:
-        load = occ.get(sh.id, 0)
-        alive = shards_repo.is_alive(sh)
-        seen = "никогда" if not sh.last_seen_at else sh.last_seen_at.strftime("%Y-%m-%d %H:%M")
-        marker = "🟢" if alive else "🔴"
-        lines.append(
-            f"{marker} <b>{sh.name}</b> · id={sh.id} · {load}/{sh.capacity} · {sh.status.value}\n"
-            f"    service: <code>{sh.service_id or '-'}</code>\n"
-            f"    last_seen: {seen}"
-        )
-    await msg.answer("\n\n".join(lines), parse_mode="HTML")
-
-
-@router.message(Command("pause_shard"))
-async def cmd_pause_shard(msg: Message, session: AsyncSession, user: User) -> None:
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await msg.answer("Использование: <code>/pause_shard &lt;name&gt;</code>", parse_mode="HTML")
-        return
-    from app.repos import shards as shards_repo
-    from app.db.models import ShardStatus
-
-    sh = await shards_repo.by_name(session, parts[1].strip())
-    if not sh:
-        await msg.answer("Шард не найден.")
-        return
-    await shards_repo.set_status(session, sh.id, ShardStatus.PAUSED)
-    await session.commit()
-    await msg.answer(f"⏸ Шард <b>{sh.name}</b> на паузе.", parse_mode="HTML")
-
-
-@router.message(Command("resume_shard"))
-async def cmd_resume_shard(msg: Message, session: AsyncSession, user: User) -> None:
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await msg.answer("Использование: <code>/resume_shard &lt;name&gt;</code>", parse_mode="HTML")
-        return
-    from app.repos import shards as shards_repo
-    from app.db.models import ShardStatus
-
-    sh = await shards_repo.by_name(session, parts[1].strip())
-    if not sh:
-        await msg.answer("Шард не найден.")
-        return
-    await shards_repo.set_status(session, sh.id, ShardStatus.ACTIVE)
-    await session.commit()
-    await msg.answer(f"▶ Шард <b>{sh.name}</b> снова активен.", parse_mode="HTML")
-
-
-@router.message(Command("drop_shard"))
-async def cmd_drop_shard(msg: Message, session: AsyncSession, user: User) -> None:
-    """Delete a shard from the registry. Existing tenants on it become orphaned
-    until you /reassign or the shard goes back online."""
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await msg.answer("Использование: <code>/drop_shard &lt;name&gt;</code>", parse_mode="HTML")
-        return
-    from app.repos import shards as shards_repo
-
-    sh = await shards_repo.by_name(session, parts[1].strip())
-    if not sh:
-        await msg.answer("Шард не найден.")
-        return
-    await shards_repo.delete(session, sh.id)
-    await session.commit()
-    await msg.answer(f"◾ Шард <b>{sh.name}</b> удалён.", parse_mode="HTML")
-
-
-# --- Coupons ---
-
-@router.message(Command("create_coupon"))
-async def cmd_create_coupon(msg: Message, session: AsyncSession, user: User) -> None:
-    """/create_coupon <product=cardinal|script> [days=30] [expires_in_days=30]"""
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 2:
-        await msg.answer(
-            "Использование: <code>/create_coupon &lt;cardinal|script&gt; [days=30] [expires_in_days=30]</code>",
-            parse_mode="HTML",
-        )
-        return
-    try:
-        product = ProductKind(parts[1].strip().lower())
-    except ValueError:
-        await msg.answer("Продукт должен быть <code>cardinal</code> или <code>script</code>.", parse_mode="HTML")
-        return
-    days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
-    expires_in = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 30
-
-    from app.repos import coupons as coupons_repo
-
-    cp = await coupons_repo.create(
-        session,
-        product=product,
-        days=days,
-        issued_by=user.id,
-        expires_in_days=expires_in,
-    )
-    await session.commit()
-    await msg.answer(
-        f"<b>Купон создан</b>\n\n"
-        f"◾ Код: <code>{cp.code}</code>\n"
-        f"◾ Продукт: {product.value}\n"
-        f"◾ Срок: {days} дн.\n"
-        f"◾ Активен: {expires_in} дн.\n\n"
-        f"Юзер вводит этот код в /menu → Купить → «У меня купон».",
+        f"<b>Статистика</b>\n\n"
+        f"Юзеров: {s['users_total']}\n"
+        f"Активных 24ч: {s['users_active_24h']}\n"
+        f"Платящих: {s['paying_users']}\n"
+        f"Подписок: {s['active_subs']}\n"
+        f"Выручка 30д: {s['revenue_30d_rub']} ₽\n"
+        f"Всего: {s['revenue_total_rub']} ₽",
         parse_mode="HTML",
     )
 
 
-@router.message(Command("coupons"))
-async def cmd_coupons(msg: Message, session: AsyncSession, user: User) -> None:
-    if not await _require_admin(session, user):
-        return
-    from app.repos import coupons as coupons_repo
-
-    rows = await coupons_repo.list_all(session)
-    if not rows:
-        await msg.answer("Купонов пока нет. Создай через /create_coupon.")
-        return
-    lines = ["<b>Купоны:</b>"]
-    for cp in rows[:30]:
-        used = f"used by {cp.used_by}" if cp.used_by else "free"
-        exp = "—" if not cp.expires_at else cp.expires_at.strftime("%Y-%m-%d")
-        lines.append(
-            f"  ◇ <code>{cp.code}</code> · {cp.product.value} · {cp.days}d · до {exp} · {used}"
-        )
-    if len(rows) > 30:
-        lines.append(f"\n<i>+ ещё {len(rows) - 30}</i>")
-    await msg.answer("\n".join(lines), parse_mode="HTML")
+# ---------------------------------------------------------------------------
+# Server (instance) management
+# ---------------------------------------------------------------------------
 
 
-@router.message(Command("del_coupon"))
-async def cmd_del_coupon(msg: Message, session: AsyncSession, user: User) -> None:
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await msg.answer("Использование: <code>/del_coupon &lt;code&gt;</code>", parse_mode="HTML")
-        return
-    from app.repos import coupons as coupons_repo
-
-    ok = await coupons_repo.delete(session, parts[1].strip().upper())
-    await session.commit()
-    await msg.answer("Удалён." if ok else "Не найден.")
+def _status_dot(inst: Instance, alive: bool) -> str:
+    if inst.status == InstanceStatus.LIVE and alive:
+        return "🟢"
+    if inst.status in (InstanceStatus.PENDING, InstanceStatus.DEPLOYING):
+        return "🟡"
+    if inst.status in (InstanceStatus.FAILED, InstanceStatus.SUSPENDED):
+        return "🔴"
+    if inst.status == InstanceStatus.LIVE and not alive:
+        return "🟡"
+    return "🔴"
 
 
-# --- Subscription editing ---
-
-async def _resolve_user_id(text_arg: str) -> int | None:
-    """Accept either numeric ID or @username (numeric only here)."""
-    s = text_arg.strip().lstrip("@")
-    if s.isdigit():
-        return int(s)
-    return None
-
-
-@router.message(Command("grant_sub"))
-async def cmd_grant_sub(msg: Message, session: AsyncSession, user: User) -> None:
-    """/grant_sub <user_id> <product> [days=30]"""
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 3:
-        await msg.answer(
-            "Использование: <code>/grant_sub &lt;user_id&gt; &lt;cardinal|script&gt; [days=30]</code>",
-            parse_mode="HTML",
-        )
-        return
-    uid = await _resolve_user_id(parts[1])
-    if not uid:
-        await msg.answer("user_id должен быть числом.")
-        return
-    try:
-        product = ProductKind(parts[2].strip().lower())
-    except ValueError:
-        await msg.answer("Продукт должен быть cardinal или script.")
-        return
-    days = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 30
-
-    from app.repos import subscriptions as subs_repo
-
-    sub = await subs_repo.extend(session, uid, product, days)
-    await session.commit()
-    await msg.answer(
-        f"▣ Юзеру <code>{uid}</code> выдана подписка <b>{product.value}</b> до "
-        f"<code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code> (+{days} дн.)",
-        parse_mode="HTML",
-    )
-    try:
-        await msg.bot.send_message(
-            uid,
-            f"▣ Админ выдал тебе подписку <b>{product.value}</b> на {days} дн.\n"
-            f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
-            parse_mode="HTML",
-        )
-    except Exception:  # noqa: BLE001
-        pass
-
-
-@router.message(Command("add_days"))
-async def cmd_add_days(msg: Message, session: AsyncSession, user: User) -> None:
-    """Alias for /grant_sub — добавить дни."""
-    await cmd_grant_sub(msg, session, user)
-
-
-@router.message(Command("remove_days"))
-async def cmd_remove_days(msg: Message, session: AsyncSession, user: User) -> None:
-    """/remove_days <user_id> <product> <days>"""
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 4:
-        await msg.answer(
-            "Использование: <code>/remove_days &lt;user_id&gt; &lt;cardinal|script&gt; &lt;days&gt;</code>",
-            parse_mode="HTML",
-        )
-        return
-    uid = await _resolve_user_id(parts[1])
-    if not uid:
-        await msg.answer("user_id должен быть числом.")
-        return
-    try:
-        product = ProductKind(parts[2].strip().lower())
-    except ValueError:
-        await msg.answer("Продукт должен быть cardinal или script.")
-        return
-    if not parts[3].isdigit():
-        await msg.answer("days должен быть числом.")
-        return
-    days = int(parts[3])
-
-    from app.repos import subscriptions as subs_repo
-
-    existing = await subs_repo.get(session, uid, product)
-    if not existing:
-        await msg.answer("У юзера нет такой подписки.")
-        return
-    sub = await subs_repo.extend(session, uid, product, -days)
-    await session.commit()
-    await msg.answer(
-        f"◾ С юзера <code>{uid}</code> снято {days} дн. {product.value}. "
-        f"Истекает: <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code>",
-        parse_mode="HTML",
-    )
-
-
-@router.message(Command("revoke_sub"))
-async def cmd_revoke_sub(msg: Message, session: AsyncSession, user: User) -> None:
-    """/revoke_sub <user_id> <product>"""
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 3:
-        await msg.answer(
-            "Использование: <code>/revoke_sub &lt;user_id&gt; &lt;cardinal|script&gt;</code>",
-            parse_mode="HTML",
-        )
-        return
-    uid = await _resolve_user_id(parts[1])
-    if not uid:
-        await msg.answer("user_id должен быть числом.")
-        return
-    try:
-        product = ProductKind(parts[2].strip().lower())
-    except ValueError:
-        await msg.answer("Продукт должен быть cardinal или script.")
-        return
-
-    from app.repos import subscriptions as subs_repo
-
-    sub = await subs_repo.get(session, uid, product)
-    if sub:
-        from app.utils.time import now_utc
-
-        sub.expires_at = now_utc()
-        await session.commit()
-    await msg.answer(f"◾ Подписка {product.value} у <code>{uid}</code> отозвана.", parse_mode="HTML")
-
-
-@router.message(Command("user_info"))
-async def cmd_user_info(msg: Message, session: AsyncSession, user: User) -> None:
-    """/user_info <user_id> — показать профиль и подписки."""
-    if not await _require_admin(session, user):
-        return
-    parts = (msg.text or "").split(maxsplit=1)
-    if len(parts) < 2:
-        await msg.answer("Использование: <code>/user_info &lt;user_id&gt;</code>", parse_mode="HTML")
-        return
-    uid = await _resolve_user_id(parts[1])
-    if not uid:
-        await msg.answer("user_id должен быть числом.")
-        return
-    from app.repos import subscriptions as subs_repo
-
-    target = await users_repo.by_id(session, uid)
-    if not target:
-        await msg.answer("Юзер не найден.")
-        return
-    subs = await subs_repo.list_for_user(session, uid)
-    lines = [
-        f"<b>Юзер</b> <code>{target.id}</code>",
-        f"◾ Имя: {target.first_name or '—'} (@{target.username or '—'})",
-        f"◾ Админ: {target.is_admin} · Бан: {target.is_blocked}",
-        f"◾ XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
-        "",
-        "<b>Подписки:</b>",
-    ]
-    if subs:
-        for s in subs:
-            lines.append(f"  ◆ {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}")
-    else:
-        lines.append("  ◇ нет")
-    await msg.answer("\n".join(lines), parse_mode="HTML")
-
-
-# --- Admin help ---
-
-@router.message(Command("admin_help"))
-async def cmd_admin_help(msg: Message, session: AsyncSession, user: User) -> None:
-    if not await _require_admin(session, user):
-        return
-    await msg.answer(
-        "<b>Админ-команды Mi Host</b>\n\n"
-        "<b>Подписки:</b>\n"
-        "<code>/grant_sub user_id cardinal|script [days=30]</code>\n"
-        "<code>/add_days user_id product days</code>\n"
-        "<code>/remove_days user_id product days</code>\n"
-        "<code>/revoke_sub user_id product</code>\n"
-        "<code>/user_info user_id</code>\n\n"
-        "<b>Купоны:</b>\n"
-        "<code>/create_coupon cardinal|script [days=30] [expires_in_days=30]</code>\n"
-        "<code>/coupons</code>  ·  <code>/del_coupon CODE</code>\n\n"
-        "<b>Шарды:</b>\n"
-        "<code>/add_shard NAME RENDER_API_KEY [capacity=4]</code>\n"
-        "<code>/shards</code> · <code>/pause_shard NAME</code> · <code>/resume_shard NAME</code> · <code>/drop_shard NAME</code>\n\n"
-        "<b>Экспорт данных (только super-admin):</b>\n"
-        "<code>/export_user user_id</code> — архив инстансов одного юзера\n"
-        "<code>/export_all</code> — архив всех живых инстансов\n\n"
-        "<b>База / админы:</b>\n"
-        "<code>/rotate_db</code>  ·  <code>/addadmin user_id</code>  ·  <code>/stats</code>\n\n"
-        "<b>Контент:</b>\n"
-        "<code>/post_now</code>  ·  <code>/brand_channel</code>",
-        parse_mode="HTML",
-    )
-
-
-# --- Data export (super-admin only) ---
-
-PRIMARY_ADMIN_ID = 8341143485
-
-
-def _is_primary_admin(user: User) -> bool:
-    return user.id == PRIMARY_ADMIN_ID
-
-
-async def _zip_for_user(target_user_id: int) -> bytes | None:
-    """Zip every tenant data dir for a given user_id."""
-    import io
-    import zipfile
-    from sqlalchemy import select as sql_select
-
-    from app.db.base import SessionLocal
-    from app.db.models import Instance
-    from app.services.supervisor import DEFAULT_DATA_DIR
-
-    async with SessionLocal() as s:
-        res = await s.execute(
-            sql_select(Instance).where(Instance.user_id == target_user_id)
-        )
-        instances = list(res.scalars())
-    if not instances:
-        return None
-    buf = io.BytesIO()
-    wrote_any = False
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for inst in instances:
-            base = DEFAULT_DATA_DIR / str(inst.id)
-            # Always write a manifest with config so admin sees golden_key etc.
-            import json as _json
-
-            manifest = {
-                "instance_id": inst.id,
-                "user_id": inst.user_id,
-                "product": inst.product.value,
-                "name": inst.name,
-                "status": inst.status.value,
-                "shard_id": inst.shard_id,
-                "config": inst.config or {},
-                "render_url": inst.render_url,
-                "created_at": inst.created_at.isoformat() if inst.created_at else None,
-            }
-            zf.writestr(
-                f"inst{inst.id}_{inst.product.value}/manifest.json",
-                _json.dumps(manifest, ensure_ascii=False, indent=2),
-            )
-            wrote_any = True
-            if base.exists() and base.is_dir():
-                for f in base.rglob("*"):
-                    if f.is_file():
-                        try:
-                            zf.write(
-                                f,
-                                arcname=f"inst{inst.id}_{inst.product.value}/{f.relative_to(base)}",
-                            )
-                        except OSError:
-                            continue
-    if not wrote_any:
-        return None
-    buf.seek(0)
-    return buf.getvalue()
-
-
-@router.message(Command("export_user"))
-async def cmd_export_user(msg: Message, session: AsyncSession, user: User) -> None:
-    if not _is_primary_admin(user):
-        await msg.answer("◇ Команда только для главного админа.")
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
-        await msg.answer("Использование: /export_user <user_id>")
-        return
-    target = int(parts[1])
-    data = await _zip_for_user(target)
-    if data is None:
-        await msg.answer("◇ У юзера нет инстансов или каталоги пусты.")
-        return
-    from aiogram.types import BufferedInputFile
-
-    fname = f"miihost_user{target}.zip"
-    await msg.answer_document(
-        BufferedInputFile(data, filename=fname),
-        caption=f"◾ Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
-        parse_mode="HTML",
-    )
-
-
-@router.message(Command("export_all"))
-async def cmd_export_all(msg: Message, session: AsyncSession, user: User) -> None:
-    if not _is_primary_admin(user):
-        await msg.answer("◇ Команда только для главного админа.")
-        return
-    import io
-    import zipfile
-    from sqlalchemy import select as sql_select
-
-    from app.db.models import Instance, InstanceStatus
-    from app.services.supervisor import DEFAULT_DATA_DIR
-
-    res = await session.execute(
-        sql_select(Instance).where(Instance.status != InstanceStatus.DELETED)
-    )
-    instances = list(res.scalars())
-    if not instances:
-        await msg.answer("◇ Нет активных инстансов.")
-        return
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        import json as _json
-
-        for inst in instances:
-            base = DEFAULT_DATA_DIR / str(inst.id)
-            manifest = {
-                "instance_id": inst.id,
-                "user_id": inst.user_id,
-                "product": inst.product.value,
-                "name": inst.name,
-                "status": inst.status.value,
-                "shard_id": inst.shard_id,
-                "config": inst.config or {},
-                "render_url": inst.render_url,
-                "created_at": inst.created_at.isoformat() if inst.created_at else None,
-            }
-            zf.writestr(
-                f"user{inst.user_id}/inst{inst.id}_{inst.product.value}/manifest.json",
-                _json.dumps(manifest, ensure_ascii=False, indent=2),
-            )
-            if base.exists() and base.is_dir():
-                for f in base.rglob("*"):
-                    if f.is_file():
-                        try:
-                            zf.write(
-                                f,
-                                arcname=f"user{inst.user_id}/inst{inst.id}_{inst.product.value}/{f.relative_to(base)}",
-                            )
-                        except OSError:
-                            continue
-    buf.seek(0)
-    data = buf.getvalue()
-    from aiogram.types import BufferedInputFile
-
-    await msg.answer_document(
-        BufferedInputFile(data, filename="mihost_export_all.zip"),
-        caption=f"◾ Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
-        parse_mode="HTML",
-    )
-
-
-# =============================================================================
-# Button-based admin (no commands needed). Each top-level callback opens a
-# submenu; submenu buttons drive an FSM that prompts for whatever input is
-# still missing (user_id, code, etc.). All gated by _require_admin.
-# =============================================================================
-
-
-# --- Subscriptions submenu ---
-
-@router.callback_query(F.data == "admin:subs")
-async def cb_subs_menu(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+@router.callback_query(F.data == "admin:servers")
+async def cb_servers(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
+    res = await session.execute(
+        select(Instance)
+        .where(Instance.status != InstanceStatus.DELETED)
+        .order_by(Instance.id.desc())
+        .limit(50)
+    )
+    items = res.scalars().all()
+    if not items:
+        await _send_or_edit(cb, "<b>Серверы</b>\n\nПусто.", admin_back())
+        await cb.answer()
+        return
+    rows: list[list[InlineKeyboardButton]] = []
+    lines = ["<b>Серверы (последние 50)</b>", ""]
+    for inst in items:
+        s = supervisor.status(inst.id)
+        dot = _status_dot(inst, bool(s.get("alive")))
+        lines.append(
+            f"{dot} #{inst.id} · u{inst.user_id} · {inst.product.value} · {inst.status.value}"
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{dot} #{inst.id} · u{inst.user_id}",
+                    callback_data=f"adm:srv:open:{inst.id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="« В админку", callback_data="admin")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    text = "\n".join(lines)
+    await _send_or_edit(cb, text, kb)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("adm:srv:open:"))
+async def cb_server_open(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    inst_id = int(cb.data.split(":")[3])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найден", show_alert=True)
+        return
+    s = supervisor.status(inst.id)
+    dot = _status_dot(inst, bool(s.get("alive")))
+    text = (
+        f"<b>Сервер #{inst.id}</b> {dot}\n"
+        f"Юзер: <code>{inst.user_id}</code>\n"
+        f"Продукт: {inst.product.value}\n"
+        f"Статус (БД): {inst.status.value}\n"
+        f"Процесс: {'живой' if s.get('alive') else 'нет'}\n"
+        f"PID: {s.get('pid') or '—'}\n"
+        f"Аптайм: {s.get('uptime', 0)} сек\n"
+        f"Перезапусков: {s.get('restart_count', 0)}\n"
+    )
+    await _send_or_edit(cb, text, admin_server_actions(inst.id))
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("adm:srv:restart:"))
+async def cb_server_restart(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    inst_id = int(cb.data.split(":")[3])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найден", show_alert=True)
+        return
+    if supervisor.tenants.get(inst.id):
+        await supervisor.restart(inst.id)
+    elif inst.product == ProductKind.CARDINAL and inst.shard_id is None:
+        from app.services.cardinal import start_tenant
+
+        gk = (inst.config or {}).get("golden_key")
+        if gk:
+            await start_tenant(inst.id, golden_key=gk)
+    inst.status = InstanceStatus.LIVE
+    inst.desired_state = "live"
+    await session.commit()
+    await cb.answer("Перезапущено")
+    await cb_server_open(cb, session, user)
+
+
+@router.callback_query(F.data.startswith("adm:srv:stop:"))
+async def cb_server_stop(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    inst_id = int(cb.data.split(":")[3])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найден", show_alert=True)
+        return
+    if supervisor.tenants.get(inst.id):
+        await supervisor.stop(inst.id)
+    inst.status = InstanceStatus.SUSPENDED
+    inst.desired_state = "stopped"
+    await session.commit()
+    await cb.answer("Остановлено")
+    await cb_server_open(cb, session, user)
+
+
+@router.callback_query(F.data.startswith("adm:srv:logs:"))
+async def cb_server_logs(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    inst_id = int(cb.data.split(":")[3])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найден", show_alert=True)
+        return
+    lines = supervisor.tail(inst.id, lines=60)
+    text = "<b>Логи (последние 60 строк)</b>\n\n<pre>"
+    text += "\n".join(lines) if lines else "Логов пока нет"
+    text += "</pre>"
     if cb.message:
         await cb.message.answer(
-            "<b>◆ Подписки</b>\n\n"
-            "Управление подписками юзеров. Все действия — кнопками.",
-            parse_mode="HTML",
-            reply_markup=admin_subs_menu(),
+            text, parse_mode="HTML", reply_markup=admin_server_actions(inst.id)
         )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^admin:sub:(grant|add|remove)$"))
-async def cb_sub_pick_product(
+@router.callback_query(F.data.startswith("adm:srv:delete:"))
+async def cb_server_delete(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    inst_id = int(cb.data.split(":")[3])
+    text = f"Удалить сервер #{inst_id}? Подписка не возвращается."
+    await _send_or_edit(
+        cb,
+        text,
+        admin_confirm(
+            yes_data=f"adm:srv:delete_yes:{inst_id}",
+            no_data=f"adm:srv:open:{inst_id}",
+        ),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("adm:srv:delete_yes:"))
+async def cb_server_delete_yes(
     cb: CallbackQuery, session: AsyncSession, user: User
 ) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
-    if not cb.data:
+    inst_id = int(cb.data.split(":")[3])
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst:
+        await cb.answer("Не найден", show_alert=True)
         return
-    action = cb.data.split(":")[2]
-    titles = {"grant": "Выдать подписку", "add": "Добавить дни", "remove": "Снять дни"}
-    if cb.message:
-        await cb.message.answer(
-            f"<b>◆ {titles[action]}</b>\n\nВыбери продукт:",
-            parse_mode="HTML",
-            reply_markup=admin_pick_product(action),
-        )
-    await cb.answer()
-
-
-@router.callback_query(F.data.regexp(r"^admin:sub:(grant|add|remove):p:(cardinal|script)$"))
-async def cb_sub_pick_days(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    if not cb.data:
-        return
-    parts = cb.data.split(":")
-    action = parts[2]
-    product = parts[4]
-    await state.update_data(action=action, product=product)
-    if cb.message:
-        await cb.message.answer(
-            f"Продукт <b>{product}</b>. Выбери количество дней:",
-            parse_mode="HTML",
-            reply_markup=admin_pick_days(action, product),
-        )
-    await cb.answer()
-
-
-@router.callback_query(F.data.regexp(r"^admin:sub:(grant|add|remove):d:(cardinal|script):(\d+|custom)$"))
-async def cb_sub_collect_user(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    if not cb.data:
-        return
-    parts = cb.data.split(":")
-    action = parts[2]
-    product = parts[4]
-    days_raw = parts[5]
-    if days_raw == "custom":
-        await state.update_data(action=action, product=product)
-        await state.set_state(AdminFSM.awaiting_sub_custom_days)
-        if cb.message:
-            await cb.message.answer(
-                "Пришли число дней (можно отрицательное для снятия). /cancel — отмена."
-            )
-        await cb.answer()
-        return
-    days = int(days_raw)
-    if action == "remove":
-        days = -abs(days)
-    elif action == "add" or action == "grant":
-        days = abs(days)
-    await state.update_data(action=action, product=product, days=days)
-    await state.set_state(AdminFSM.awaiting_sub_user_id)
-    if cb.message:
-        await cb.message.answer(
-            f"<b>{action}</b> · <b>{product}</b> · <b>{days:+d} дн</b>\n\n"
-            f"Пришли user_id юзера. /cancel — отмена.",
-            parse_mode="HTML",
-        )
-    await cb.answer()
-
-
-@router.message(AdminFSM.awaiting_sub_custom_days)
-async def msg_sub_custom_days(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
-        return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    s = (msg.text or "").strip().lstrip("+")
-    sign = -1 if s.startswith("-") else 1
-    s = s.lstrip("-")
-    if not s.isdigit():
-        await msg.answer("Нужно число. Попробуй ещё раз или /cancel.")
-        return
-    data = await state.get_data()
-    action = data.get("action")
-    days = sign * int(s)
-    if action == "remove":
-        days = -abs(days)
-    elif action in ("add", "grant"):
-        days = abs(days)
-    await state.update_data(days=days)
-    await state.set_state(AdminFSM.awaiting_sub_user_id)
-    await msg.answer(
-        f"Дней: <b>{days:+d}</b>. Теперь пришли user_id. /cancel — отмена.",
-        parse_mode="HTML",
-    )
-
-
-@router.message(AdminFSM.awaiting_sub_user_id)
-async def msg_sub_apply(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
-        return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    raw = (msg.text or "").strip().lstrip("@")
-    if not raw.isdigit():
-        await msg.answer("user_id должен быть числом. /cancel — отмена.")
-        return
-    uid = int(raw)
-    data = await state.get_data()
-    action = data.get("action")
-    product_str = data.get("product")
-    days = int(data.get("days", 0))
-    try:
-        product = ProductKind(product_str)
-    except (ValueError, TypeError):
-        await state.clear()
-        await msg.answer("◇ Внутренняя ошибка: продукт не распознан.", reply_markup=admin_back())
-        return
-
-    from app.repos import subscriptions as subs_repo
-
-    if action == "remove":
-        existing = await subs_repo.get(session, uid, product)
-        if not existing:
-            await state.clear()
-            await msg.answer(
-                f"У юзера <code>{uid}</code> нет подписки на <b>{product.value}</b>.",
-                parse_mode="HTML",
-                reply_markup=admin_back(),
-            )
-            return
-
-    sub = await subs_repo.extend(session, uid, product, days)
+    if supervisor.tenants.get(inst.id):
+        await supervisor.stop(inst.id)
+    inst.status = InstanceStatus.DELETED
+    inst.desired_state = "stopped"
     await session.commit()
-    await msg.answer(
-        f"▣ Готово. Юзер <code>{uid}</code> · <b>{product.value}</b> · "
-        f"{days:+d} дн → активно до <code>{sub.expires_at.strftime('%Y-%m-%d %H:%M')}</code>.",
-        parse_mode="HTML",
-        reply_markup=admin_back(),
-    )
-    try:
-        if days > 0:
-            await msg.bot.send_message(
-                uid,
-                f"▣ Админ выдал тебе подписку <b>{product.value}</b>: +{days} дн.\n"
-                f"Активна до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
-                parse_mode="HTML",
-            )
-        elif days < 0:
-            await msg.bot.send_message(
-                uid,
-                f"◾ Админ изменил твою подписку <b>{product.value}</b>: {days} дн.\n"
-                f"Действует до {sub.expires_at.strftime('%Y-%m-%d %H:%M')}.",
-                parse_mode="HTML",
-            )
-    except Exception:  # noqa: BLE001
-        pass
-    await state.clear()
+    await cb.answer("Удалено")
+    await cb_servers(cb, session, user)
 
 
-@router.callback_query(F.data == "admin:sub:revoke")
-async def cb_sub_revoke_start(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    await state.set_state(AdminFSM.awaiting_revoke_user_id)
-    if cb.message:
-        await cb.message.answer(
-            "Пришли user_id и продукт через пробел: <code>123456 cardinal</code>\n"
-            "/cancel — отмена.",
-            parse_mode="HTML",
-        )
-    await cb.answer()
+# ---------------------------------------------------------------------------
+# User search / actions
+# ---------------------------------------------------------------------------
 
-
-@router.message(AdminFSM.awaiting_revoke_user_id)
-async def msg_sub_revoke_apply(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
-        return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 2 or not parts[0].lstrip("@").isdigit():
-        await msg.answer(
-            "Формат: <code>user_id cardinal|script</code>. /cancel — отмена.",
-            parse_mode="HTML",
-        )
-        return
-    uid = int(parts[0].lstrip("@"))
-    try:
-        product = ProductKind(parts[1].strip().lower())
-    except ValueError:
-        await msg.answer("Продукт должен быть cardinal или script.")
-        return
-    from app.repos import subscriptions as subs_repo
-
-    sub = await subs_repo.get(session, uid, product)
-    if sub:
-        from app.utils.time import now_utc
-
-        sub.expires_at = now_utc()
-        await session.commit()
-        await msg.answer(
-            f"◾ Подписка <b>{product.value}</b> у <code>{uid}</code> отозвана.",
-            parse_mode="HTML",
-            reply_markup=admin_back(),
-        )
-    else:
-        await msg.answer(
-            "У юзера нет такой подписки.", reply_markup=admin_back()
-        )
-    await state.clear()
-
-
-# --- User info ---
 
 @router.callback_query(F.data == "admin:user")
 async def cb_user_start(
@@ -1142,181 +347,203 @@ async def cb_user_start(
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
-    await state.set_state(AdminFSM.awaiting_userinfo_id)
+    await state.set_state(AdminFSM.awaiting_user_id)
     if cb.message:
         await cb.message.answer(
-            "Пришли user_id для получения профиля и подписок. /cancel — отмена."
+            "Пришли <code>id</code> юзера или <code>@username</code>.",
+            parse_mode="HTML",
         )
     await cb.answer()
 
 
-@router.message(AdminFSM.awaiting_userinfo_id)
-async def msg_user_info_apply(
+async def _resolve_user_id(text_arg: str, session: AsyncSession) -> Optional[int]:
+    text_arg = text_arg.strip()
+    if text_arg.isdigit():
+        return int(text_arg)
+    if text_arg.startswith("@"):
+        text_arg = text_arg[1:]
+    res = await session.execute(select(User).where(User.username == text_arg))
+    u = res.scalars().first()
+    return u.id if u else None
+
+
+@router.message(AdminFSM.awaiting_user_id)
+async def msg_user_lookup(
     msg: Message, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
+    if not await is_admin(session, user.id):
         return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    raw = (msg.text or "").strip().lstrip("@")
-    if not raw.isdigit():
-        await msg.answer("user_id должен быть числом.")
-        return
-    uid = int(raw)
-    from app.repos import subscriptions as subs_repo
-
-    target = await users_repo.by_id(session, uid)
-    if not target:
-        await state.clear()
+    target_id = await _resolve_user_id(msg.text or "", session)
+    await state.clear()
+    if not target_id:
         await msg.answer("Юзер не найден.", reply_markup=admin_back())
         return
-    subs = await subs_repo.list_for_user(session, uid)
+    await _show_user(msg, session, target_id)
+
+
+async def _show_user(msg: Message, session: AsyncSession, target_id: int) -> None:
+    u = await session.get(User, target_id)
+    if not u:
+        await msg.answer("Юзер не найден.", reply_markup=admin_back())
+        return
+    subs = await subs_repo.list_for_user(session, target_id)
+    insts = await inst_repo.list_for_user(session, target_id)
     lines = [
-        f"<b>Юзер</b> <code>{target.id}</code>",
-        f"◾ Имя: {target.first_name or '—'} (@{target.username or '—'})",
-        f"◾ Админ: {target.is_admin} · Бан: {target.is_blocked}",
-        f"◾ XP: {target.xp} · Coins: {target.coins} · Lvl: {target.level}",
+        f"<b>Юзер</b> <code>{u.id}</code>",
+        f"Имя: {u.first_name or '—'}",
+        f"@{u.username}" if u.username else "username: —",
+        f"Создан: {fmt_msk(u.created_at)}",
+        f"Активен: {fmt_msk(u.last_seen_at)}",
+        f"Заблокирован: {'да' if u.is_blocked else 'нет'}",
+        f"Админ: {'да' if u.is_admin else 'нет'}",
         "",
-        "<b>Подписки:</b>",
+        "<b>Подписки</b>",
     ]
     if subs:
         for s in subs:
-            lines.append(
-                f"  ◆ {s.product.value} → {s.expires_at.strftime('%Y-%m-%d %H:%M')}"
-            )
+            mark = "активна" if s.expires_at > now_utc() else "истекла"
+            lines.append(f"  · {s.product.value} — до {fmt_msk(s.expires_at)} ({mark})")
     else:
-        lines.append("  ◇ нет")
+        lines.append("  —")
+    lines.append("")
+    lines.append(f"<b>Серверы:</b> {len(insts)}")
     await msg.answer(
-        "\n".join(lines), parse_mode="HTML", reply_markup=admin_back()
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=admin_user_actions(target_id),
     )
-    await state.clear()
 
 
-# --- Coupons submenu ---
-
-@router.callback_query(F.data == "admin:coupons")
-async def cb_coupons_menu(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
+@router.callback_query(F.data.regexp(r"^admin:user:grant:(\d+):(\d+)$"))
+async def cb_user_grant(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
-    if cb.message:
-        await cb.message.answer(
-            "<b>◆ Купоны</b>\n\n"
-            "Купоны выдают подписку без оплаты. Юзер вводит код в /menu → Купить → «У меня купон».",
-            parse_mode="HTML",
-            reply_markup=admin_coupons_menu(),
-        )
+    parts = cb.data.split(":")
+    target_id = int(parts[3])
+    days = int(parts[4])
+    await subs_repo.extend(session, target_id, ProductKind.CARDINAL, days)
+    await logs_repo.write(
+        session,
+        kind="admin.grant",
+        message=f"+{days}d to user {target_id}",
+        user_id=user.id,
+    )
+    await session.commit()
+    await cb.answer(f"+{days} дн.")
+
+
+@router.callback_query(F.data.startswith("admin:user:revoke:"))
+async def cb_user_revoke(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    target_id = int(cb.data.split(":")[3])
+    res = await session.execute(
+        select(Subscription).where(Subscription.user_id == target_id)
+    )
+    for s in res.scalars().all():
+        s.expires_at = now_utc()
+    await logs_repo.write(
+        session,
+        kind="admin.revoke",
+        message=f"revoke subs for user {target_id}",
+        user_id=user.id,
+    )
+    await session.commit()
+    await cb.answer("Подписка снята")
+
+
+@router.callback_query(F.data.startswith("admin:user:ban:"))
+async def cb_user_ban(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    target_id = int(cb.data.split(":")[3])
+    target = await session.get(User, target_id)
+    if target:
+        target.is_blocked = True
+        await session.commit()
+    await cb.answer("Заблокирован")
+
+
+@router.callback_query(F.data.startswith("admin:user:unban:"))
+async def cb_user_unban(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    target_id = int(cb.data.split(":")[3])
+    target = await session.get(User, target_id)
+    if target:
+        target.is_blocked = False
+        await session.commit()
+    await cb.answer("Разблокирован")
+
+
+# ---------------------------------------------------------------------------
+# Coupons
+# ---------------------------------------------------------------------------
+
+
+@router.callback_query(F.data == "admin:coupons")
+async def cb_coupons_menu(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
+    if not await _require_admin(session, user):
+        await cb.answer("Только для админа", show_alert=True)
+        return
+    await _send_or_edit(cb, "<b>Купоны</b>", admin_coupons_menu())
     await cb.answer()
 
 
 @router.callback_query(F.data == "admin:coupon:new")
-async def cb_coupon_new(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
+async def cb_coupon_new(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
-    if cb.message:
-        await cb.message.answer(
-            "Сколько дней должен давать купон?",
-            reply_markup=admin_coupon_days(),
-        )
+    await _send_or_edit(
+        cb, "<b>Купон</b>\nНа сколько дней?", admin_coupon_days()
+    )
     await cb.answer()
 
 
 @router.callback_query(F.data.regexp(r"^admin:coupon:days:(\d+)$"))
-async def cb_coupon_pick_product(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
+async def cb_coupon_make(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
-    if not cb.data:
-        return
     days = int(cb.data.split(":")[3])
-    if cb.message:
-        await cb.message.answer(
-            f"<b>{days} дн</b> · выбери продукт:",
-            parse_mode="HTML",
-            reply_markup=admin_coupon_pick(days),
-        )
+    coupon = await coupons_repo.create(
+        session, product=ProductKind.CARDINAL, days=days, issued_by=user.id
+    )
+    await session.commit()
+    text = (
+        "<b>Купон создан</b>\n\n"
+        f"Код: <code>{coupon.code}</code>\n"
+        f"Продукт: cardinal\n"
+        f"Дней: {days}\n"
+        f"Использований: 1 (одноразовый)"
+    )
+    await _send_or_edit(cb, text, admin_coupons_menu())
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^admin:coupon:mk:(cardinal|script):(\d+)$"))
-async def cb_coupon_create(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    if not cb.data:
-        return
-    _, _, _, product_raw, days_raw = cb.data.split(":")
-    try:
-        product = ProductKind(product_raw)
-    except ValueError:
-        await cb.answer("Неверный продукт", show_alert=True)
-        return
-    days = int(days_raw)
-    from app.repos import coupons as coupons_repo
-
-    cp = await coupons_repo.create(
-        session,
-        product=product,
-        days=days,
-        issued_by=user.id,
-        expires_in_days=30,
-    )
-    await session.commit()
-    if cb.message:
-        await cb.message.answer(
-            f"<b>▣ Купон создан</b>\n\n"
-            f"◾ Код: <code>{cp.code}</code>\n"
-            f"◾ Продукт: <b>{product.value}</b>\n"
-            f"◾ Срок действия купона: 30 дн.\n"
-            f"◾ Даёт подписку: <b>{days} дн</b>",
-            parse_mode="HTML",
-            reply_markup=admin_back(),
-        )
-    await cb.answer("Купон создан")
-
-
 @router.callback_query(F.data == "admin:coupon:list")
-async def cb_coupon_list(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
+async def cb_coupon_list(cb: CallbackQuery, session: AsyncSession, user: User) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
-    from app.repos import coupons as coupons_repo
-
-    rows = await coupons_repo.list_all(session)
-    if not rows:
-        if cb.message:
-            await cb.message.answer(
-                "Купонов пока нет.", reply_markup=admin_back()
-            )
-        await cb.answer()
-        return
-    lines = ["<b>Купоны:</b>"]
-    for cp in rows[:30]:
-        used = f"used by {cp.used_by}" if cp.used_by else "free"
-        exp = "—" if not cp.expires_at else cp.expires_at.strftime("%Y-%m-%d")
+    res = await session.execute(
+        select(Coupon).order_by(Coupon.created_at.desc()).limit(30)
+    )
+    items = res.scalars().all()
+    lines = ["<b>Купоны (последние 30)</b>", ""]
+    if not items:
+        lines.append("—")
+    for c in items:
+        used = "использован" if c.used_by else "свободен"
         lines.append(
-            f"  ◇ <code>{cp.code}</code> · {cp.product.value} · {cp.days}d · до {exp} · {used}"
+            f"<code>{c.code}</code> · {c.product.value} · {c.days}д · {used}"
         )
-    if len(rows) > 30:
-        lines.append(f"\n<i>+ ещё {len(rows) - 30}</i>")
-    if cb.message:
-        await cb.message.answer(
-            "\n".join(lines), parse_mode="HTML", reply_markup=admin_back()
-        )
+    await _send_or_edit(cb, "\n".join(lines), admin_coupons_menu())
     await cb.answer()
 
 
@@ -1329,437 +556,183 @@ async def cb_coupon_del_start(
         return
     await state.set_state(AdminFSM.awaiting_coupon_del_code)
     if cb.message:
-        await cb.message.answer(
-            "Пришли код купона для удаления (формат <code>MH-XXXXXXXX</code>). /cancel — отмена.",
-            parse_mode="HTML",
-        )
+        await cb.message.answer("Пришли код купона для удаления.")
     await cb.answer()
 
 
 @router.message(AdminFSM.awaiting_coupon_del_code)
-async def msg_coupon_del_apply(
+async def msg_coupon_del(
     msg: Message, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
-        return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
+    if not await is_admin(session, user.id):
         return
     code = (msg.text or "").strip().upper()
-    from app.repos import coupons as coupons_repo
-
-    ok = await coupons_repo.delete(session, code)
-    await session.commit()
-    await msg.answer(
-        "Удалён." if ok else "Купон не найден.",
-        reply_markup=admin_back(),
-    )
-    await state.clear()
-
-
-# --- Shards submenu ---
-
-@router.callback_query(F.data == "admin:shards")
-async def cb_shards_menu(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    if cb.message:
-        await cb.message.answer(
-            "<b>◆ Шарды</b>\n\nShard = отдельный Render-аккаунт, на котором крутятся "
-            "тенанты. Для добавления нужен Render API key с GitHub-OAuth-аккаунта.",
-            parse_mode="HTML",
-            reply_markup=admin_shards_menu(),
-        )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "admin:shard:list")
-async def cb_shard_list(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    from app.repos import shards as shards_repo
-
-    rows = await shards_repo.all_(session)
-    occ = await shards_repo.occupancy(session)
-    if not rows:
-        if cb.message:
-            await cb.message.answer(
-                "Шардов пока нет.", reply_markup=admin_back()
-            )
-        await cb.answer()
-        return
-    from app.repos import shards as shards_repo2  # avoid shadowing
-
-    lines = ["<b>Шарды:</b>"]
-    for sh in rows:
-        load = occ.get(sh.id, 0)
-        last = (
-            sh.last_seen_at.strftime("%Y-%m-%d %H:%M")
-            if getattr(sh, "last_seen_at", None)
-            else "—"
-        )
-        alive = shards_repo2.is_alive(sh)
-        marker = "●" if alive else "○"
-        lines.append(
-            f"  {marker} <b>{sh.name}</b> · {load}/{sh.capacity} · "
-            f"{sh.status.value} · last_seen={last}"
-        )
-    if cb.message:
-        await cb.message.answer(
-            "\n".join(lines), parse_mode="HTML", reply_markup=admin_back()
-        )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "admin:shard:add")
-async def cb_shard_add_start(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
-        return
-    await state.set_state(AdminFSM.awaiting_shard_add)
-    if cb.message:
-        await cb.message.answer(
-            "Пришли строку: <code>name render_api_key [capacity=3]</code>\n"
-            "Пример: <code>shard-5 rnd_xxx 3</code>\n\n"
-            "/cancel — отмена.",
-            parse_mode="HTML",
-        )
-    await cb.answer()
-
-
-@router.message(AdminFSM.awaiting_shard_add)
-async def msg_shard_add_apply(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
-        return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    parts = (msg.text or "").split()
-    if len(parts) < 2:
-        await msg.answer("Нужно минимум name и api_key. /cancel — отмена.")
-        return
-    name = parts[0].strip()
-    api_key = parts[1].strip()
-    capacity = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 3
-
-    from app.repos import shards as shards_repo
-    from app.services.render_api import RenderClient
-    from app.services.shard_provision import provision_worker
-
-    rc = RenderClient(api_key=api_key)
-    try:
-        owner_id = await rc.autodetect_owner()
-    except Exception as exc:  # noqa: BLE001
-        await msg.answer(
-            f"❌ API key недействителен: <code>{exc}</code>",
-            parse_mode="HTML",
-            reply_markup=admin_back(),
-        )
-        await state.clear()
-        return
-    if not owner_id:
-        await msg.answer("❌ Не нашёл owner у этого API key.", reply_markup=admin_back())
-        await state.clear()
-        return
-    existing = await shards_repo.by_name(session, name)
-    if existing:
-        await msg.answer(
-            f"❌ Шард <b>{name}</b> уже есть.",
-            parse_mode="HTML",
-            reply_markup=admin_back(),
-        )
-        await state.clear()
-        return
-
-    shard = await shards_repo.create(
-        session, name=name, api_key=api_key, owner_id=owner_id, capacity=capacity
-    )
-    await session.commit()
-    await msg.answer(
-        f"▣ Шард <b>{name}</b> зарегистрирован (id={shard.id}). Деплою воркер…",
-        parse_mode="HTML",
-    )
-    try:
-        await msg.delete()
-    except Exception:  # noqa: BLE001
-        pass
-
-    result = await provision_worker(session, shard.id)
-    await session.commit()
-    if result.get("ok"):
-        await msg.answer(
-            f"▣ Воркер деплоится: <code>{result.get('service_id')}</code>\n"
-            f"URL: {result.get('service_url')}",
-            parse_mode="HTML",
-            reply_markup=admin_back(),
-        )
+    res = await session.execute(select(Coupon).where(Coupon.code == code))
+    c = res.scalars().first()
+    if not c:
+        await msg.answer("Не найден", reply_markup=admin_back())
     else:
-        await msg.answer(
-            f"⚠️ Не получилось задеплоить: <code>{result.get('reason')}</code>",
-            parse_mode="HTML",
-            reply_markup=admin_back(),
-        )
+        await session.delete(c)
+        await session.commit()
+        await msg.answer("Удалён", reply_markup=admin_back())
     await state.clear()
 
 
-@router.callback_query(F.data == "admin:shard:toggle")
-async def cb_shard_toggle_start(
+# ---------------------------------------------------------------------------
+# Broadcast
+# ---------------------------------------------------------------------------
+
+
+@router.callback_query(F.data == "admin:broadcast")
+async def cb_broadcast_start(
     cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
     if not await _require_admin(session, user):
         await cb.answer("Только для админа", show_alert=True)
         return
-    await state.set_state(AdminFSM.awaiting_shard_toggle)
+    await state.set_state(AdminFSM.awaiting_broadcast)
     if cb.message:
         await cb.message.answer(
-            "Пришли имя шарда (он переключится между paused/active). /cancel — отмена."
+            "Пришли текст рассылки одним сообщением. HTML поддерживается."
         )
     await cb.answer()
 
 
-@router.message(AdminFSM.awaiting_shard_toggle)
-async def msg_shard_toggle_apply(
+@router.message(AdminFSM.awaiting_broadcast)
+async def do_broadcast(
     msg: Message, state: FSMContext, session: AsyncSession, user: User
 ) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
+    if not await is_admin(session, user.id):
         return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    name = (msg.text or "").strip()
-    from app.repos import shards as shards_repo
-
-    from app.db.models import ShardStatus
-
-    sh = await shards_repo.by_name(session, name)
-    if not sh:
-        await msg.answer("Шард не найден.", reply_markup=admin_back())
-        await state.clear()
-        return
-    new_status = (
-        ShardStatus.ACTIVE if sh.status == ShardStatus.PAUSED else ShardStatus.PAUSED
-    )
-    await shards_repo.set_status(session, sh.id, new_status)
-    await session.commit()
-    await msg.answer(
-        f"▣ <b>{name}</b> теперь: <b>{new_status.value}</b>",
-        parse_mode="HTML",
-        reply_markup=admin_back(),
-    )
+    text = msg.text or ""
     await state.clear()
-
-
-@router.callback_query(F.data == "admin:shard:drop")
-async def cb_shard_drop_start(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await cb.answer("Только для админа", show_alert=True)
+    if not text:
+        await msg.answer("Пусто", reply_markup=admin_back())
         return
-    await state.set_state(AdminFSM.awaiting_shard_drop)
-    if cb.message:
-        await cb.message.answer(
-            "Пришли имя шарда для удаления. ⚠️ Render-сервис тоже будет удалён, "
-            "тенанты на нём — переброшены при следующем reconcile. /cancel — отмена."
-        )
-    await cb.answer()
-
-
-@router.message(AdminFSM.awaiting_shard_drop)
-async def msg_shard_drop_apply(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not await _require_admin(session, user):
-        await state.clear()
-        return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    name = (msg.text or "").strip()
-    from app.repos import shards as shards_repo
-    from app.services.render_api import RenderClient
-
-    sh = await shards_repo.by_name(session, name)
-    if not sh:
-        await msg.answer("Шард не найден.", reply_markup=admin_back())
-        await state.clear()
-        return
-    if sh.service_id and sh.api_key_enc:
+    res = await session.execute(select(User).where(User.is_blocked == False))
+    targets = [u.id for u in res.scalars().all()]
+    sent = 0
+    for uid in targets:
         try:
-            api_key = await shards_repo.get_api_key(session, sh.id)
-            if api_key:
-                rc = RenderClient(api_key=api_key)
-                await rc.delete_service(sh.service_id)
-        except Exception as exc:  # noqa: BLE001
-            await msg.answer(
-                f"⚠ Render service удаление: <code>{exc}</code>",
-                parse_mode="HTML",
-            )
-    await shards_repo.delete(session, sh.id)
+            await msg.bot.send_message(uid, text, parse_mode="HTML")
+            sent += 1
+        except Exception:  # noqa: BLE001
+            pass
+        await asyncio.sleep(0.04)  # ~25 msg/s — under Telegram's global limit
+    await msg.answer(
+        f"Рассылка завершена: {sent}/{len(targets)}", reply_markup=admin_back()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Add / remove admin (commands only)
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("addadmin"))
+async def cmd_add_admin(
+    msg: Message, command: CommandObject, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        return
+    arg = (command.args or "").strip()
+    if not arg or not arg.isdigit():
+        await msg.answer("Использование: /addadmin <user_id>")
+        return
+    target = await session.get(User, int(arg))
+    if not target:
+        await msg.answer("Не найден")
+        return
+    target.is_admin = True
+    await session.commit()
+    await msg.answer(f"Готово: {target.id} теперь админ.")
+
+
+@router.message(Command("rmadmin"))
+async def cmd_rm_admin(
+    msg: Message, command: CommandObject, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        return
+    arg = (command.args or "").strip()
+    if not arg or not arg.isdigit():
+        await msg.answer("Использование: /rmadmin <user_id>")
+        return
+    target = await session.get(User, int(arg))
+    if target:
+        target.is_admin = False
+        await session.commit()
+    await msg.answer("Готово")
+
+
+# ---------------------------------------------------------------------------
+# Coupon CLI commands (kept for power-users)
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("create_coupon"))
+async def cmd_create_coupon(
+    msg: Message, command: CommandObject, session: AsyncSession, user: User
+) -> None:
+    if not await is_admin(session, user.id):
+        return
+    parts = (command.args or "").split()
+    if not parts:
+        await msg.answer("Использование: /create_coupon <days>")
+        return
+    try:
+        days = int(parts[0])
+    except ValueError:
+        await msg.answer("days должно быть числом")
+        return
+    coupon = await coupons_repo.create(
+        session, product=ProductKind.CARDINAL, days=days, issued_by=user.id
+    )
     await session.commit()
     await msg.answer(
-        f"▣ Шард <b>{name}</b> удалён.",
-        parse_mode="HTML",
-        reply_markup=admin_back(),
-    )
-    await state.clear()
-
-
-# --- Export submenu ---
-
-@router.callback_query(F.data == "admin:export")
-async def cb_export_menu(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not _is_primary_admin(user):
-        await cb.answer("Только для главного админа", show_alert=True)
-        return
-    if cb.message:
-        await cb.message.answer(
-            "<b>◆ Экспорт данных</b>\n\n"
-            "Скачать конфиги тенантов одним архивом. Доступно только главному админу.",
-            parse_mode="HTML",
-            reply_markup=admin_export_menu(),
-        )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "admin:export:user")
-async def cb_export_user_start(
-    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not _is_primary_admin(user):
-        await cb.answer("Только для главного админа", show_alert=True)
-        return
-    await state.set_state(AdminFSM.awaiting_export_user_id)
-    if cb.message:
-        await cb.message.answer(
-            "Пришли user_id для экспорта. /cancel — отмена."
-        )
-    await cb.answer()
-
-
-@router.message(AdminFSM.awaiting_export_user_id)
-async def msg_export_user_apply(
-    msg: Message, state: FSMContext, session: AsyncSession, user: User
-) -> None:
-    if not _is_primary_admin(user):
-        await state.clear()
-        return
-    if (msg.text or "").strip() == "/cancel":
-        await state.clear()
-        await msg.answer("Отменено.", reply_markup=admin_back())
-        return
-    raw = (msg.text or "").strip().lstrip("@")
-    if not raw.lstrip("-").isdigit():
-        await msg.answer("user_id должен быть числом.")
-        return
-    target = int(raw)
-    data = await _zip_for_user(target)
-    if data is None:
-        await msg.answer(
-            "◇ У юзера нет инстансов или каталоги пусты.",
-            reply_markup=admin_back(),
-        )
-        await state.clear()
-        return
-    from aiogram.types import BufferedInputFile
-
-    fname = f"miihost_user{target}.zip"
-    await msg.answer_document(
-        BufferedInputFile(data, filename=fname),
-        caption=f"◾ Экспорт user_id <code>{target}</code> · {len(data)//1024} KB",
+        f"Купон <code>{coupon.code}</code> · {days}д",
         parse_mode="HTML",
     )
-    await state.clear()
 
 
-@router.callback_query(F.data == "admin:export:all")
-async def cb_export_all_btn(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    if not _is_primary_admin(user):
-        await cb.answer("Только для главного админа", show_alert=True)
+@router.message(Command("coupons"))
+async def cmd_coupons(msg: Message, session: AsyncSession, user: User) -> None:
+    if not await is_admin(session, user.id):
         return
-    # Re-use the existing /export_all command body; easiest is to fake a Message.
-    if cb.message:
-        await cb.message.answer("⏳ Готовлю экспорт всех инстансов…")
-        # Adapt cmd_export_all by passing the callback message + acting like /export_all
-        cb.message.from_user = cb.from_user  # type: ignore[attr-defined]
-        # We can't safely call cmd_export_all directly because it pulls msg.text
-        # so we replicate the body inline:
-        import io
-        import zipfile
-        from sqlalchemy import select as sql_select
-
-        from app.db.models import Instance, InstanceStatus
-        from app.services.supervisor import DEFAULT_DATA_DIR
-
-        res = await session.execute(
-            sql_select(Instance).where(Instance.status != InstanceStatus.DELETED)
+    res = await session.execute(
+        select(Coupon).order_by(Coupon.created_at.desc()).limit(30)
+    )
+    items = res.scalars().all()
+    if not items:
+        await msg.answer("—")
+        return
+    lines = []
+    for c in items:
+        used = "использован" if c.used_by else "свободен"
+        lines.append(
+            f"<code>{c.code}</code> · {c.product.value} · {c.days}д · {used}"
         )
-        instances = list(res.scalars())
-        if not instances:
-            await cb.message.answer(
-                "◇ Нет активных инстансов.", reply_markup=admin_back()
-            )
-            await cb.answer()
-            return
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            import json as _json
+    await msg.answer("\n".join(lines), parse_mode="HTML")
 
-            for inst in instances:
-                base = DEFAULT_DATA_DIR / str(inst.id)
-                manifest = {
-                    "instance_id": inst.id,
-                    "user_id": inst.user_id,
-                    "product": inst.product.value,
-                    "name": inst.name,
-                    "status": inst.status.value,
-                    "shard_id": inst.shard_id,
-                    "config": inst.config or {},
-                    "render_url": inst.render_url,
-                    "created_at": inst.created_at.isoformat() if inst.created_at else None,
-                }
-                zf.writestr(
-                    f"user{inst.user_id}/inst{inst.id}_{inst.product.value}/manifest.json",
-                    _json.dumps(manifest, ensure_ascii=False, indent=2),
-                )
-                if base.exists() and base.is_dir():
-                    for f in base.rglob("*"):
-                        if f.is_file():
-                            try:
-                                zf.write(
-                                    f,
-                                    arcname=f"user{inst.user_id}/inst{inst.id}_{inst.product.value}/{f.relative_to(base)}",
-                                )
-                            except OSError:
-                                continue
-        buf.seek(0)
-        data = buf.getvalue()
-        from aiogram.types import BufferedInputFile
 
-        await cb.message.answer_document(
-            BufferedInputFile(data, filename="mihost_export_all.zip"),
-            caption=f"◾ Экспорт всех инстансов · {len(instances)} шт · {len(data)//1024} KB",
-            parse_mode="HTML",
+# ---------------------------------------------------------------------------
+# Servers (CLI shortcut)
+# ---------------------------------------------------------------------------
+
+
+@router.message(Command("shards"))
+async def cmd_shards(msg: Message, session: AsyncSession, user: User) -> None:
+    """Quick shard inventory view (read-only)."""
+    if not await is_admin(session, user.id):
+        return
+    res = await session.execute(select(Shard).order_by(Shard.id))
+    items = res.scalars().all()
+    if not items:
+        await msg.answer("Нет шардов. Они подгружаются из MIHOST_PRESEED_SHARDS.")
+        return
+    lines = ["<b>Шарды</b>", ""]
+    for sh in items:
+        lines.append(
+            f"#{sh.id} · {sh.name} · {sh.status.value} · cap {sh.capacity}"
         )
-    await cb.answer()
+    await msg.answer("\n".join(lines), parse_mode="HTML")

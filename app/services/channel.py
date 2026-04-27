@@ -44,10 +44,10 @@ async def auto_brand(bot: Bot) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("set_chat_photo: %s", exc)
 
-    title = "Mi Host — хостинг Cardinal & скриптов"
+    title = "Mi Host — хостинг FunPay Cardinal"
     description = (
-        "Хостинг FunPay Cardinal за 40₽/мес и пользовательских скриптов за 50₽/мес.\n\n"
-        "Авто-конфиг · Авто-рестарт · Логи · Оплата CryptoBot.\n\n"
+        "Хостинг FunPay Cardinal за 40 ₽/мес.\n\n"
+        "Авто-настройка · Авто-рестарт · Логи · Оплата CryptoBot.\n\n"
         f"Бот: @{bot_username}"
     )
     try:
@@ -61,12 +61,10 @@ async def auto_brand(bot: Bot) -> bool:
 
     # Pinned welcome
     welcome = (
-        "<b>Mi Host — хостинг без боли.</b>\n\n"
-        "• FunPay Cardinal — 40 ₽/мес\n"
-        "• Кастомные скрипты — 50 ₽/мес\n"
-        "• Авто-настройка, авто-рестарт, логи, мониторинг\n"
-        "• Оплата CryptoBot · подписка 30 дней\n"
-        "• Мини-игра: +1 день каждые 12 часов\n\n"
+        "<b>Mi Host — хостинг FunPay Cardinal.</b>\n\n"
+        "— 40 ₽ / 30 дней\n"
+        "— Авто-настройка, авто-рестарт, логи, мониторинг\n"
+        "— Оплата CryptoBot · подписка 30 дней\n\n"
         f"Открыть бот: @{bot_username}"
     )
     try:
@@ -82,7 +80,6 @@ KIND_TO_IMAGE = {
     "review": "profile.png",
     "case": "order.png",
     "update": "notifications.png",
-    "trigger": "minigame.png",
 }
 
 
@@ -91,8 +88,8 @@ async def post_one(bot: Bot, kind: Optional[str] = None) -> Optional[int]:
         return None
     if kind is None:
         kind = random.choices(
-            ["post", "review", "case", "update", "trigger"],
-            weights=[5, 3, 2, 2, 2],
+            ["post", "review", "case", "update"],
+            weights=[5, 3, 2, 2],
             k=1,
         )[0]
     me = await bot.get_me()

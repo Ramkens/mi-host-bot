@@ -14,7 +14,6 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
-    Index,
     Integer,
     JSON,
     String,
@@ -22,7 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
@@ -57,24 +56,12 @@ class User(Base):
     language_code: Mapped[Optional[str]] = mapped_column(String(8))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
-    referrer_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("users.id"))
-    bonus_days: Mapped[int] = mapped_column(Integer, default=0)  # banked bonus
-    coins: Mapped[int] = mapped_column(Integer, default=0)  # internal economy
-    level: Mapped[int] = mapped_column(Integer, default=1)
-    xp: Mapped[int] = mapped_column(Integer, default=0)
-    last_minigame_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now()
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now()
     )
-
-    referrals: Mapped[list["User"]] = relationship(
-        "User", backref="referrer", remote_side="User.id"
-    )
-
-    __table_args__ = (Index("ix_users_referrer", "referrer_id"),)
 
 
 class Subscription(Base):
@@ -214,18 +201,6 @@ class ContentPost(Base):
     posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     tg_message_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     extra: Mapped[dict] = mapped_column(JSON, default=dict)
-
-
-class ReferralEvent(Base):
-    __tablename__ = "referral_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    referrer_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    referee_id: Mapped[int] = mapped_column(BigInteger, index=True, unique=True)
-    rewarded: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=func.now()
-    )
 
 
 class Coupon(Base):

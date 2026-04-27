@@ -1,27 +1,23 @@
-"""Inline keyboards (strict dark/neon UI: arrows + bullets, no joyful emoji)."""
+"""Inline keyboards. Minimalist — only essential buttons."""
 from __future__ import annotations
 
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.db.models import ProductKind
+
+# ---------------------------------------------------------------------------
+# User-facing menus
+# ---------------------------------------------------------------------------
 
 
 def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
+    """Главное меню: 3 кнопки — Серверы, Купить, Поддержка (+ Админка)."""
     rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(text="▸ Купить хостинг", callback_data="buy:menu"),
-            InlineKeyboardButton(text="▸ Профиль", callback_data="profile"),
-        ],
-        [
-            InlineKeyboardButton(text="▸ Мои инстансы", callback_data="instances"),
-            InlineKeyboardButton(text="▸ Поддержка", callback_data="support"),
-        ],
+        [InlineKeyboardButton(text="Мои серверы", callback_data="instances")],
+        [InlineKeyboardButton(text="Купить сервер", callback_data="buy:menu")],
+        [InlineKeyboardButton(text="Поддержка", callback_data="support")],
     ]
     if is_admin:
-        rows.append([InlineKeyboardButton(text="◆ Админка", callback_data="admin")])
+        rows.append([InlineKeyboardButton(text="Админка", callback_data="admin")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -32,24 +28,27 @@ def back_to_menu() -> InlineKeyboardMarkup:
 
 
 def buy_menu() -> InlineKeyboardMarkup:
+    """Один продукт — FunPay Cardinal."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="▸ FunPay Cardinal · 40 ₽ / мес",
-                    callback_data=f"buy:start:{ProductKind.CARDINAL.value}:std",
+                    text="FunPay Cardinal — 40 ₽ / 30 дней",
+                    callback_data="buy:start:cardinal",
                 )
             ],
+            [InlineKeyboardButton(text="У меня есть купон", callback_data="buy:coupon")],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
         ]
     )
 
 
-def buy_confirm_tier(product: str, tier: str) -> InlineKeyboardMarkup:
+def buy_confirm() -> InlineKeyboardMarkup:
+    """Сводка перед оплатой."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="▣ К оплате", callback_data=f"buy:invoice:{product}:{tier}")],
-            [InlineKeyboardButton(text="◇ У меня купон", callback_data=f"buy:coupon:{product}:{tier}")],
+            [InlineKeyboardButton(text="Оплатить", callback_data="buy:invoice")],
+            [InlineKeyboardButton(text="У меня есть купон", callback_data="buy:coupon")],
             [InlineKeyboardButton(text="« Отмена", callback_data="menu")],
         ]
     )
@@ -58,36 +57,101 @@ def buy_confirm_tier(product: str, tier: str) -> InlineKeyboardMarkup:
 def pay_buttons(pay_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="▣ Оплатить в CryptoBot (USDT)", url=pay_url)],
-            [InlineKeyboardButton(text="▸ Я оплатил — проверить", callback_data="pay:check")],
+            [InlineKeyboardButton(text="Оплатить (USDT)", url=pay_url)],
+            [InlineKeyboardButton(text="Я оплатил — проверить", callback_data="pay:check")],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
         ]
     )
 
 
-def admin_menu() -> InlineKeyboardMarkup:
+# ---------------------------------------------------------------------------
+# Server (instance) actions
+# ---------------------------------------------------------------------------
+
+
+def instance_actions(instance_id: int) -> InlineKeyboardMarkup:
+    """Действия с конкретным сервером пользователя."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="◆ Статистика", callback_data="admin:stats"),
-                InlineKeyboardButton(text="◆ Юзер", callback_data="admin:user"),
+                InlineKeyboardButton(
+                    text="Перезапустить",
+                    callback_data=f"inst:restart:{instance_id}",
+                ),
+                InlineKeyboardButton(
+                    text="Логи",
+                    callback_data=f"inst:logs:{instance_id}",
+                ),
             ],
             [
-                InlineKeyboardButton(text="◆ Подписки", callback_data="admin:subs"),
-                InlineKeyboardButton(text="◆ Купоны", callback_data="admin:coupons"),
+                InlineKeyboardButton(
+                    text="Сменить golden_key",
+                    callback_data=f"inst:setkey:{instance_id}",
+                )
             ],
             [
-                InlineKeyboardButton(text="◆ Шарды", callback_data="admin:shards"),
-                InlineKeyboardButton(text="◆ Экспорт", callback_data="admin:export"),
+                InlineKeyboardButton(
+                    text="Конфиги Cardinal",
+                    callback_data=f"inst:cfg:menu:{instance_id}",
+                )
+            ],
+            [InlineKeyboardButton(text="« К списку", callback_data="instances")],
+        ]
+    )
+
+
+def instance_cfg_menu(instance_id: int) -> InlineKeyboardMarkup:
+    """Подменю «Конфиги»: загрузить/посмотреть _main / auto_response / auto_delivery."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Текущий _main.cfg",
+                    callback_data=f"inst:cfg:show:{instance_id}",
+                )
             ],
             [
-                InlineKeyboardButton(text="◆ Рассылка", callback_data="admin:broadcast"),
-                InlineKeyboardButton(text="◆ Доб. админа", callback_data="admin:add_admin"),
+                InlineKeyboardButton(
+                    text="Загрузить _main.cfg",
+                    callback_data=f"inst:cfg:main:{instance_id}",
+                )
             ],
             [
-                InlineKeyboardButton(text="◆ Брендировать канал", callback_data="admin:brand"),
-                InlineKeyboardButton(text="◆ Пост", callback_data="admin:post_now"),
+                InlineKeyboardButton(
+                    text="Загрузить auto_response.cfg",
+                    callback_data=f"inst:cfg:resp:{instance_id}",
+                )
             ],
+            [
+                InlineKeyboardButton(
+                    text="Загрузить auto_delivery.cfg",
+                    callback_data=f"inst:cfg:deliv:{instance_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=f"inst:open:{instance_id}",
+                )
+            ],
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin keyboards
+# ---------------------------------------------------------------------------
+
+
+def admin_menu() -> InlineKeyboardMarkup:
+    """Главное меню админа — только то, что реально нужно."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Статистика", callback_data="admin:stats")],
+            [InlineKeyboardButton(text="Серверы (все)", callback_data="admin:servers")],
+            [InlineKeyboardButton(text="Юзер по id", callback_data="admin:user")],
+            [InlineKeyboardButton(text="Купоны", callback_data="admin:coupons")],
+            [InlineKeyboardButton(text="Рассылка", callback_data="admin:broadcast")],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
         ]
     )
@@ -99,95 +163,82 @@ def admin_back() -> InlineKeyboardMarkup:
     )
 
 
-def admin_subs_menu() -> InlineKeyboardMarkup:
+def admin_user_actions(user_id: int) -> InlineKeyboardMarkup:
+    """Действия над юзером после поиска по id."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="▸ Выдать подписку", callback_data="admin:sub:grant")],
-            [InlineKeyboardButton(text="▸ Добавить дни", callback_data="admin:sub:add")],
-            [InlineKeyboardButton(text="▸ Снять дни", callback_data="admin:sub:remove")],
-            [InlineKeyboardButton(text="▸ Отозвать подписку", callback_data="admin:sub:revoke")],
+            [
+                InlineKeyboardButton(
+                    text="Выдать 30 дней",
+                    callback_data=f"admin:user:grant:{user_id}:30",
+                ),
+                InlineKeyboardButton(
+                    text="Выдать 7 дней",
+                    callback_data=f"admin:user:grant:{user_id}:7",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Снять подписку",
+                    callback_data=f"admin:user:revoke:{user_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Заблокировать",
+                    callback_data=f"admin:user:ban:{user_id}",
+                ),
+                InlineKeyboardButton(
+                    text="Разблокировать",
+                    callback_data=f"admin:user:unban:{user_id}",
+                ),
+            ],
             [InlineKeyboardButton(text="« В админку", callback_data="admin")],
         ]
     )
 
 
-def admin_pick_product(action: str) -> InlineKeyboardMarkup:
-    """For sub:grant / sub:add / sub:remove — pick which product first.
-
-    `action` is one of {grant, add, remove}; flows through callback_data.
-    """
+def admin_server_actions(instance_id: int) -> InlineKeyboardMarkup:
+    """Админ-действия над любым сервером."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="▸ Cardinal",
-                    callback_data=f"admin:sub:{action}:p:{ProductKind.CARDINAL.value}",
+                    text="Перезапустить",
+                    callback_data=f"adm:srv:restart:{instance_id}",
                 ),
                 InlineKeyboardButton(
-                    text="▸ Script",
-                    callback_data=f"admin:sub:{action}:p:{ProductKind.SCRIPT.value}",
+                    text="Остановить",
+                    callback_data=f"adm:srv:stop:{instance_id}",
                 ),
             ],
-            [InlineKeyboardButton(text="« Назад", callback_data="admin:subs")],
+            [
+                InlineKeyboardButton(
+                    text="Логи",
+                    callback_data=f"adm:srv:logs:{instance_id}",
+                ),
+                InlineKeyboardButton(
+                    text="Удалить",
+                    callback_data=f"adm:srv:delete:{instance_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад к списку",
+                    callback_data="admin:servers",
+                )
+            ],
         ]
     )
-
-
-def admin_pick_days(action: str, product: str) -> InlineKeyboardMarkup:
-    """Quick-pick day amounts for sub grant/add/remove."""
-    rows = []
-    presets = (3, 7, 14, 30, 90, 365)
-    row: list[InlineKeyboardButton] = []
-    for d in presets:
-        row.append(
-            InlineKeyboardButton(
-                text=f"{d} дн",
-                callback_data=f"admin:sub:{action}:d:{product}:{d}",
-            )
-        )
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="▣ Свой ввод",
-                callback_data=f"admin:sub:{action}:d:{product}:custom",
-            )
-        ]
-    )
-    rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin:subs")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_coupons_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="▸ Создать купон", callback_data="admin:coupon:new")],
-            [InlineKeyboardButton(text="▸ Список купонов", callback_data="admin:coupon:list")],
-            [InlineKeyboardButton(text="▸ Удалить купон", callback_data="admin:coupon:del")],
+            [InlineKeyboardButton(text="Создать купон", callback_data="admin:coupon:new")],
+            [InlineKeyboardButton(text="Список купонов", callback_data="admin:coupon:list")],
+            [InlineKeyboardButton(text="Удалить купон", callback_data="admin:coupon:del")],
             [InlineKeyboardButton(text="« В админку", callback_data="admin")],
-        ]
-    )
-
-
-def admin_coupon_pick(days: int) -> InlineKeyboardMarkup:
-    """After picking days for a new coupon — choose product."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="▸ Cardinal",
-                    callback_data=f"admin:coupon:mk:{ProductKind.CARDINAL.value}:{days}",
-                ),
-                InlineKeyboardButton(
-                    text="▸ Script",
-                    callback_data=f"admin:coupon:mk:{ProductKind.SCRIPT.value}:{days}",
-                ),
-            ],
-            [InlineKeyboardButton(text="« Назад", callback_data="admin:coupons")],
         ]
     )
 
@@ -197,82 +248,20 @@ def admin_coupon_days() -> InlineKeyboardMarkup:
     presets = (7, 30, 90, 365)
     row: list[InlineKeyboardButton] = []
     for d in presets:
-        row.append(InlineKeyboardButton(text=f"{d} дн", callback_data=f"admin:coupon:days:{d}"))
+        row.append(
+            InlineKeyboardButton(text=f"{d} дн", callback_data=f"admin:coupon:days:{d}")
+        )
     rows.append(row)
     rows.append([InlineKeyboardButton(text="« Назад", callback_data="admin:coupons")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_shards_menu() -> InlineKeyboardMarkup:
+def admin_confirm(yes_data: str, no_data: str = "admin") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="▸ Список", callback_data="admin:shard:list")],
-            [InlineKeyboardButton(text="▸ Добавить", callback_data="admin:shard:add")],
-            [InlineKeyboardButton(text="▸ Пауза/возобновить", callback_data="admin:shard:toggle")],
-            [InlineKeyboardButton(text="▸ Удалить", callback_data="admin:shard:drop")],
-            [InlineKeyboardButton(text="« В админку", callback_data="admin")],
+            [
+                InlineKeyboardButton(text="Да", callback_data=yes_data),
+                InlineKeyboardButton(text="Нет", callback_data=no_data),
+            ]
         ]
     )
-
-
-def admin_export_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="▸ Экспорт юзера", callback_data="admin:export:user")],
-            [InlineKeyboardButton(text="▸ Экспорт всех", callback_data="admin:export:all")],
-            [InlineKeyboardButton(text="« В админку", callback_data="admin")],
-        ]
-    )
-
-
-def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
-    # Сервер запускается автоматически при покупке и сам перезапускается
-    # супервизором при падении — отдельные кнопки старт/стоп не нужны.
-    rows = [
-        [
-            InlineKeyboardButton(text="▸ Перезапустить", callback_data=f"inst:restart:{instance_id}"),
-            InlineKeyboardButton(text="▸ Логи", callback_data=f"inst:logs:{instance_id}"),
-        ],
-        [
-            InlineKeyboardButton(text="▸ Статус", callback_data=f"inst:status:{instance_id}"),
-        ],
-    ]
-    if product == ProductKind.CARDINAL.value:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="▸ Сменить golden_key",
-                    callback_data=f"inst:setkey:{instance_id}",
-                ),
-            ]
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="▸ Залить _main.cfg",
-                    callback_data=f"inst:cfg:main:{instance_id}",
-                ),
-            ]
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="▸ auto_response.cfg",
-                    callback_data=f"inst:cfg:resp:{instance_id}",
-                ),
-                InlineKeyboardButton(
-                    text="▸ auto_delivery.cfg",
-                    callback_data=f"inst:cfg:deliv:{instance_id}",
-                ),
-            ]
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="▸ Текущий _main.cfg",
-                    callback_data=f"inst:cfg:show:{instance_id}",
-                ),
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="« К списку", callback_data="instances")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
