@@ -185,6 +185,7 @@ async def _preseed_shards() -> None:
     if not isinstance(items, list):
         return
     from app.repos import shards as shards_repo
+    from app.utils.crypto import decrypt, encrypt
 
     async with SessionLocal() as s:
         for item in items:
@@ -202,8 +203,12 @@ async def _preseed_shards() -> None:
                 if existing.capacity != capacity:
                     existing.capacity = capacity
                     changed = True
-                if existing.api_key != api_key:
-                    existing.api_key = api_key
+                try:
+                    current_key = decrypt(existing.api_key_enc)
+                except Exception:  # noqa: BLE001
+                    current_key = None
+                if current_key != api_key:
+                    existing.api_key_enc = encrypt(api_key)
                     changed = True
                 if existing.region != region:
                     existing.region = region
