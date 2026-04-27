@@ -41,9 +41,8 @@ async def _greeting_text(session: AsyncSession, user: User) -> str:
     lines = [
         "<b>▰▰▰  MI HOST  ▰▰▰</b>",
         "<i>хостинг FunPay Cardinal · 40 ₽/мес</i>",
-        "<i>хостинг кастом-скриптов · 50 ₽ (130 MB) / 150 ₽ (512 MB)</i>",
         "",
-        f"◾ Свободных серверов: <b>{free_card}</b> (под Cardinal)",
+        f"◾ Свободных серверов: <b>{free_card}</b>",
         "",
         f"◾ <b>{user.first_name or 'юзер'}</b>  ·  id <code>{user.id}</code>",
         f"◾ lvl {user.level}  ·  xp {user.xp}  ·  coins {user.coins}",
@@ -133,22 +132,35 @@ async def cb_profile(cb: CallbackQuery, session: AsyncSession, user: User) -> No
 
 @router.callback_query(F.data == "support")
 async def cb_support(cb: CallbackQuery) -> None:
-    admin_id = settings.admin_ids_list[0] if settings.admin_ids_list else 0
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    support_url = settings.support_url or (
+        f"tg://user?id={settings.admin_ids_list[0]}"
+        if settings.admin_ids_list
+        else "https://t.me/"
+    )
     text = (
         "<b>Поддержка</b>\n\n"
-        f"◾ Админ: <a href=\"tg://user?id={admin_id}\">написать в чат</a>\n"
+        f"◾ Админ: <a href=\"{support_url}\">написать в Telegram</a>\n"
         "◾ Время ответа: до 12 часов\n\n"
         "<b>Хочешь оплатить другой криптой?</b>\n"
         "Напиши админу: «оплата TON/BTC/ETH/…», он скинет адрес и вручную выдаст подписку.\n\n"
         "<i>Перед обращением — глянь /menu → «Мои инстансы» → Логи/Статус.</i>"
     )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="▸ Написать в Telegram", url=support_url)],
+            [InlineKeyboardButton(text="« В меню", callback_data="menu")],
+        ]
+    )
     if cb.message:
         try:
             await cb.message.edit_caption(
-                caption=text, parse_mode="HTML", reply_markup=back_to_menu()
+                caption=text, parse_mode="HTML", reply_markup=kb
             )
         except Exception:
             await cb.message.answer(
-                text, parse_mode="HTML", reply_markup=back_to_menu()
+                text, parse_mode="HTML", reply_markup=kb,
+                disable_web_page_preview=True,
             )
     await cb.answer()

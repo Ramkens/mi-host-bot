@@ -15,7 +15,7 @@ router = Router(name="support")
 FAQ = [
     (
         re.compile(r"\b(цен|стои|сколько|тариф)", re.I),
-        "Cardinal — 40₽/мес, кастом-скрипты — 50₽/мес. Оплата CryptoBot. Подписка 30 дней.",
+        "Хостинг FunPay Cardinal — 40 ₽/мес. Оплата CryptoBot. Подписка 30 дней.",
     ),
     (
         re.compile(r"\b(оплат|crypto|usdt|купить)", re.I),

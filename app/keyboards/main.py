@@ -40,18 +40,6 @@ def buy_menu() -> InlineKeyboardMarkup:
                     callback_data=f"buy:start:{ProductKind.CARDINAL.value}:std",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="▸ Скрипт STD · 130 MB · 50 ₽ / мес",
-                    callback_data=f"buy:start:{ProductKind.SCRIPT.value}:std",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="▸ Скрипт PRO · 512 MB · 150 ₽ / мес",
-                    callback_data=f"buy:start:{ProductKind.SCRIPT.value}:pro",
-                )
-            ],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
         ]
     )
@@ -238,13 +226,11 @@ def admin_export_menu() -> InlineKeyboardMarkup:
 
 
 def instance_actions(instance_id: int, product: str) -> InlineKeyboardMarkup:
+    # Сервер запускается автоматически при покупке и сам перезапускается
+    # супервизором при падении — отдельные кнопки старт/стоп не нужны.
     rows = [
         [
-            InlineKeyboardButton(text="▸ Старт", callback_data=f"inst:start:{instance_id}"),
-            InlineKeyboardButton(text="▸ Стоп", callback_data=f"inst:stop:{instance_id}"),
-        ],
-        [
-            InlineKeyboardButton(text="▸ Рестарт", callback_data=f"inst:restart:{instance_id}"),
+            InlineKeyboardButton(text="▸ Перезапустить", callback_data=f"inst:restart:{instance_id}"),
             InlineKeyboardButton(text="▸ Логи", callback_data=f"inst:logs:{instance_id}"),
         ],
         [

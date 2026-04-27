@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     referral_bonus_days: int = 3
     secret_key: str = "change_me_long_random"
 
+    # Public Telegram URL of the support contact (used by the «Поддержка» button).
+    # Format: https://t.me/<username>  or tg://user?id=<numeric_id>
+    support_url: str = "tg://user?id=8341143485"
+
+    # Optional JSON-encoded list of shards to auto-seed on first boot, e.g.:
+    #   MIHOST_PRESEED_SHARDS='[{"name":"host1","api_key":"rnd_...","capacity":4}]'
+    # If a shard with the given name already exists, it is skipped.
+    mihost_preseed_shards: str = ""
+
     @field_validator("admin_ids")
     @classmethod
     def _strip(cls, v: str) -> str:
