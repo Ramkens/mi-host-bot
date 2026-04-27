@@ -351,19 +351,31 @@ async def receive_coupon(
             "Запроси нужный купон у администратора.",
         )
         return
-    # Activate as if paid; provision the instance using the saved settings.
-    await subs_repo.extend(session, user.id, product, coupon.days)
+    # Non-stacking: коупон только «дотягивает» подписку до N дней от
+    # сейчас — если у юзера уже длиннее, купон ничего не добавляет.
+    _sub, granted = await subs_repo.ensure_at_least(
+        session, user.id, product, coupon.days
+    )
     await logs_repo.write(
         session,
         kind="coupon.redeemed",
-        message=f"{code} · +{coupon.days}d {product.value}",
+        message=f"{code} · +{granted}d of {coupon.days} {product.value}",
         user_id=user.id,
+        meta={"coupon_days": coupon.days, "granted_days": granted},
     )
     await session.commit()
-    await msg.answer(
-        f"Купон применён: +{coupon.days} дней <b>{product.value}</b>.",
-        parse_mode="HTML",
-    )
+    if granted > 0:
+        await msg.answer(
+            f"Купон применён: подписка продлена на <b>{granted}</b> дн. "
+            f"(купон на {coupon.days}).",
+            parse_mode="HTML",
+        )
+    else:
+        await msg.answer(
+            "Купон засчитан. У тебя уже подписка дольше, чем даёт купон — "
+            "срок остался прежним.",
+            parse_mode="HTML",
+        )
     # Provision the instance immediately (need golden_key from FSM data).
     if not data.get("golden_key"):
         await msg.answer(
@@ -376,7 +388,7 @@ async def receive_coupon(
         await _provision_instance(session, user.id, product, data)
         await session.commit()
         await _notify_admins_about_purchase(
-            msg, user, product, paid=False, amount_rub=0, days=coupon.days
+            msg, user, product, paid=False, amount_rub=0, days=granted
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("provision after coupon failed")
@@ -788,21 +800,32 @@ async def receive_renew_coupon(
             "Запроси у администратора подходящий."
         )
         return
-    await subs_repo.extend(session, user.id, ProductKind.CARDINAL, coupon.days)
+    _sub, granted = await subs_repo.ensure_at_least(
+        session, user.id, ProductKind.CARDINAL, coupon.days
+    )
     await logs_repo.write(
         session,
         kind="coupon.redeemed",
-        message=f"{code} · renew +{coupon.days}d",
+        message=f"{code} · renew +{granted}d of {coupon.days}",
         user_id=user.id,
+        meta={"coupon_days": coupon.days, "granted_days": granted},
     )
     await session.commit()
-    await msg.answer(
-        f"Купон применён: +{coupon.days} дней к подписке на хостинг.",
-        parse_mode="HTML",
-        reply_markup=back_to_menu(),
-    )
+    if granted > 0:
+        await msg.answer(
+            f"Купон применён: подписка продлена на <b>{granted}</b> дн. "
+            f"(купон на {coupon.days}).",
+            parse_mode="HTML",
+            reply_markup=back_to_menu(),
+        )
+    else:
+        await msg.answer(
+            "Купон засчитан. У тебя уже подписка дольше — срок остался прежним.",
+            parse_mode="HTML",
+            reply_markup=back_to_menu(),
+        )
     await _notify_admins_about_purchase(
         msg, user, ProductKind.CARDINAL,
-        paid=False, amount_rub=0, days=coupon.days,
+        paid=False, amount_rub=0, days=granted,
     )
     await state.clear()

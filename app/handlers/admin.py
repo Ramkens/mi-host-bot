@@ -792,15 +792,23 @@ async def cb_user_grant(cb: CallbackQuery, session: AsyncSession, user: User) ->
     parts = cb.data.split(":")
     target_id = int(parts[3])
     days = int(parts[4])
-    await subs_repo.extend(session, target_id, ProductKind.CARDINAL, days)
+    _sub, granted = await subs_repo.ensure_at_least(
+        session, target_id, ProductKind.CARDINAL, days
+    )
     await logs_repo.write(
         session,
         kind="admin.grant",
-        message=f"+{days}d to user {target_id}",
+        message=f"+{granted}d of {days} to user {target_id}",
         user_id=user.id,
+        meta={"target_days": days, "granted_days": granted},
     )
     await session.commit()
-    await cb.answer(f"+{days} дн.")
+    if granted > 0:
+        await cb.answer(f"+{granted} дн. (цель: {days})")
+    else:
+        await cb.answer(
+            f"Уже больше {days} дн. — не продлено", show_alert=True
+        )
 
 
 @router.callback_query(F.data.startswith("admin:user:revoke:"))
