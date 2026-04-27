@@ -48,7 +48,13 @@ async def _bootstrap_admins(bot: Bot, dp: Dispatcher) -> None:
 
 
 async def _restore_tenants() -> None:
-    """Re-spawn LIVE instances after a restart."""
+    """Re-spawn every master-side tenant that the user wants running.
+
+    Source of truth is ``desired_state=live``. We ignore ``status`` so that
+    tenants which were left in DEPLOYING / FAILED / SUSPENDED for any reason
+    (Render restart mid-boot, bot crash, transient OOM) still come back to
+    life automatically. Only DELETED rows are skipped.
+    """
     from sqlalchemy import select
     from app.db.models import Instance, InstanceStatus, ProductKind
     from app.services.cardinal import start_tenant
@@ -61,7 +67,8 @@ async def _restore_tenants() -> None:
         # assigned tenants are owned by the corresponding worker.
         res = await s.execute(
             select(Instance).where(
-                Instance.status == InstanceStatus.LIVE,
+                Instance.desired_state == "live",
+                Instance.status != InstanceStatus.DELETED,
                 Instance.shard_id.is_(None),
             )
         )
@@ -98,10 +105,12 @@ async def _restore_tenants() -> None:
 
 
 async def _tenant_watchdog() -> None:
-    """Periodically ensure every LIVE master-side tenant has a running process.
+    """Keep every master-side tenant with desired_state=live running.
 
-    Если процесс упал и супервизор не смог его поднять (например, мы перезагрузились
-    в момент падения), вотчдог сам перезапустит инстанс по данным из БД.
+    Source of truth is ``desired_state``, NOT ``status``. This guarantees that
+    if anything goes wrong (process crash, Render redeploy, OOM, the tenant
+    being briefly in DEPLOYING/FAILED/SUSPENDED state) the Cardinal comes back
+    to life automatically. Only DELETED rows are left alone.
     """
     from sqlalchemy import select
     from app.db.models import Instance, InstanceStatus, ProductKind
@@ -113,16 +122,23 @@ async def _tenant_watchdog() -> None:
             async with SessionLocal() as s:
                 res = await s.execute(
                     select(Instance).where(
-                        Instance.status == InstanceStatus.LIVE,
+                        Instance.desired_state == "live",
+                        Instance.status != InstanceStatus.DELETED,
                         Instance.shard_id.is_(None),
                     )
                 )
                 items = list(res.scalars())
             for inst in items:
-                # Skip tenants that the user/admin explicitly stopped.
-                if inst.desired_state == "stopped":
-                    continue
                 if supervisor.is_running(inst.id):
+                    # Make sure the DB reflects the actual running state so
+                    # the admin panel shows 🟢 instead of a stale status.
+                    if inst.status != InstanceStatus.LIVE or inst.actual_state != "live":
+                        async with SessionLocal() as s2:
+                            obj = await s2.get(Instance, inst.id)
+                            if obj:
+                                obj.status = InstanceStatus.LIVE
+                                obj.actual_state = "live"
+                                await s2.commit()
                     continue
                 if inst.product != ProductKind.CARDINAL:
                     continue
@@ -138,6 +154,12 @@ async def _tenant_watchdog() -> None:
                         telegram_secret=cfg.get("telegram_secret") or "",
                         locale=cfg.get("locale") or "ru",
                     )
+                    async with SessionLocal() as s2:
+                        obj = await s2.get(Instance, inst.id)
+                        if obj:
+                            obj.status = InstanceStatus.LIVE
+                            obj.actual_state = "live"
+                            await s2.commit()
                     logger.info("watchdog: restarted tenant %s", inst.id)
                 except Exception:  # noqa: BLE001
                     logger.exception("watchdog start failed for %s", inst.id)
