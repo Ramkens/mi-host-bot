@@ -90,6 +90,91 @@ async def _restore_tenants() -> None:
             logger.warning("restore tenant %s: %s", inst.id, exc)
 
 
+async def _tenant_watchdog() -> None:
+    """Periodically ensure every LIVE master-side tenant has a running process.
+
+    Если процесс упал и супервизор не смог его поднять (например, мы перезагрузились
+    в момент падения), вотчдог сам перезапустит инстанс по данным из БД.
+    """
+    from sqlalchemy import select
+    from app.db.models import Instance, InstanceStatus, ProductKind
+    from app.services.cardinal import start_tenant
+    from app.services.supervisor import supervisor
+
+    while True:
+        try:
+            async with SessionLocal() as s:
+                res = await s.execute(
+                    select(Instance).where(
+                        Instance.status == InstanceStatus.LIVE,
+                        Instance.shard_id.is_(None),
+                    )
+                )
+                items = list(res.scalars())
+            for inst in items:
+                if supervisor.is_running(inst.id):
+                    continue
+                if inst.product != ProductKind.CARDINAL:
+                    continue
+                gk = (inst.config or {}).get("golden_key")
+                if not gk:
+                    continue
+                try:
+                    await start_tenant(inst.id, golden_key=gk)
+                    logger.info("watchdog: restarted tenant %s", inst.id)
+                except Exception:  # noqa: BLE001
+                    logger.exception("watchdog start failed for %s", inst.id)
+        except Exception:  # noqa: BLE001
+            logger.exception("tenant watchdog loop error")
+        await asyncio.sleep(30)
+
+
+async def _preseed_shards() -> None:
+    """Auto-create shard rows from MIHOST_PRESEED_SHARDS env (JSON list).
+
+    Format: [{"name": "host1", "api_key": "rnd_...", "capacity": 4}, ...]
+    Idempotent: existing shards (by name) are skipped.
+    """
+    raw = (settings.mihost_preseed_shards or "").strip()
+    if not raw:
+        return
+    import json as _json
+
+    try:
+        items = _json.loads(raw)
+    except Exception:  # noqa: BLE001
+        logger.warning("MIHOST_PRESEED_SHARDS is not valid JSON, skipping")
+        return
+    if not isinstance(items, list):
+        return
+    from app.repos import shards as shards_repo
+
+    async with SessionLocal() as s:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get("name") or "").strip()
+            api_key = (item.get("api_key") or "").strip()
+            if not name or not api_key:
+                continue
+            existing = await shards_repo.by_name(s, name)
+            if existing:
+                continue
+            try:
+                await shards_repo.create(
+                    s,
+                    name=name,
+                    api_key=api_key,
+                    region=item.get("region", "frankfurt"),
+                    capacity=int(item.get("capacity", 4)),
+                    notes=item.get("notes"),
+                )
+                logger.info("preseeded shard %s", name)
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to preseed shard %s", name)
+        await s.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
@@ -136,9 +221,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     sched.start()
     app.state.scheduler = sched
 
+    # Auto-seed shards from MIHOST_PRESEED_SHARDS env (idempotent).
+    await _preseed_shards()
+
     # Restore tenants in the background. (Only for tenants assigned to master;
     # shard-assigned tenants are restored by the worker on their shard.)
     asyncio.create_task(_restore_tenants())
+
+    # Periodically auto-restart any LIVE master-side tenants whose process died.
+    app.state.watchdog_task = asyncio.create_task(_tenant_watchdog())
 
     # If a DB rotation just completed, announce "готово".
     from app.services.db_rotation import announce_done_if_pending
@@ -152,6 +243,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             sched.shutdown(wait=False)
         except Exception:
             pass
+        wd = getattr(app.state, "watchdog_task", None)
+        if wd:
+            wd.cancel()
         from app.services.supervisor import supervisor
 
         await supervisor.stop_all()

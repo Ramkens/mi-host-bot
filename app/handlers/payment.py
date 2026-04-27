@@ -55,11 +55,10 @@ async def cb_buy_menu(cb: CallbackQuery, state: FSMContext) -> None:
     if not p.exists():
         generate_all()
     text = (
-        "<b>Выбери что хостить</b>\n\n"
-        f"◾ <b>FunPay Cardinal</b> · {settings.price_cardinal_rub} ₽ / 30 дней\n"
-        "    автозапуск, авторестарт, смена golden_key прямо в боте\n\n"
-        f"◾ <b>Кастом-скрипт</b> · {settings.price_script_rub} ₽ / 30 дней\n"
-        "    .zip с твоим Python-проектом, автоанализ + автодеплой\n\n"
+        "<b>Хостинг FunPay Cardinal</b>\n\n"
+        f"◾ <b>{settings.price_cardinal_rub} ₽ / 30 дней</b>\n"
+        "    автозапуск, авторестарт, смена golden_key прямо в боте,\n"
+        "    залив _main.cfg / auto_response.cfg / auto_delivery.cfg.\n\n"
         "◇ Сначала соберём настройки, потом выставлю счёт."
     )
     if cb.message:
@@ -89,35 +88,25 @@ async def cb_buy_start(
     parts = cb.data.split(":")
     product = ProductKind(parts[2])
     tier = parts[3] if len(parts) > 3 else "std"
+    if product != ProductKind.CARDINAL:
+        # Only Cardinal hosting is offered. Custom scripts are not available.
+        await cb.answer(
+            "Доступен только хостинг FunPay Cardinal.",
+            show_alert=True,
+        )
+        return
     await state.clear()
     await state.update_data(product=product.value, tier=tier)
     if cb.message:
-        if product == ProductKind.CARDINAL:
-            await cb.message.answer(
-                "<b>Настройка Cardinal</b>\n\n"
-                "Пришли свой <code>golden_key</code> от FunPay одним сообщением.\n"
-                "Он шифруется и используется только для запуска твоего инстанса.\n\n"
-                "<i>Где взять:</i> на funpay.com → DevTools → Application → Cookies → <code>golden_key</code>.\n\n"
-                "« Отменить — /menu",
-                parse_mode="HTML",
-            )
-            await state.set_state(BuyFSM.awaiting_golden_key)
-        else:
-            ram = (
-                settings.script_pro_ram_mb if tier == "pro"
-                else settings.script_std_ram_mb
-            )
-            await cb.message.answer(
-                f"<b>Настройка скрипта · {tier.upper()} · {ram} MB</b>\n\n"
-                "Пришли .zip-архив с твоим Python-проектом одним документом.\n"
-                "Внутри: <code>main.py</code> (или другой entrypoint) и опц. "
-                "<code>requirements.txt</code>. До 25 MB.\n\n"
-                f"<i>Лимит RAM в рантайме: {ram} MB. "
-                f"{'Целый сервер выделен под тебя.' if tier == 'pro' else 'Если упирается — переходи на PRO (512 MB / 150 ₽).'}</i>\n\n"
-                "« Отменить — /menu",
-                parse_mode="HTML",
-            )
-            await state.set_state(BuyFSM.awaiting_zip)
+        await cb.message.answer(
+            "<b>Настройка Cardinal</b>\n\n"
+            "Пришли свой <code>golden_key</code> от FunPay одним сообщением.\n"
+            "Он шифруется и используется только для запуска твоего инстанса.\n\n"
+            "<i>Где взять:</i> на funpay.com → DevTools → Application → Cookies → <code>golden_key</code>.\n\n"
+            "« Отменить — /menu",
+            parse_mode="HTML",
+        )
+        await state.set_state(BuyFSM.awaiting_golden_key)
     await cb.answer()
 
 

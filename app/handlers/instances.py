@@ -75,6 +75,24 @@ async def cb_inst_open(
         await cb.answer("Не найдено", show_alert=True)
         return
     s = supervisor.status(inst_id)
+    # Авто-восстановление: если в БД статус LIVE, а процесса нет —
+    # запускаем заново на месте, чтобы пользователю не приходилось жать
+    # кнопки вручную.
+    if (
+        inst.status == InstanceStatus.LIVE
+        and not s.get("alive")
+        and inst.product == ProductKind.CARDINAL
+        and inst.shard_id is None
+    ):
+        gk = (inst.config or {}).get("golden_key")
+        if gk:
+            try:
+                from app.services.cardinal import start_tenant
+
+                await start_tenant(inst.id, golden_key=gk)
+                s = supervisor.status(inst_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("auto-restart on open failed")
     text = (
         f"<b>Инстанс #{inst.id}</b>\n"
         f"Продукт: {inst.product.value}\n"
@@ -101,64 +119,6 @@ async def cb_inst_open(
     await cb.answer()
 
 
-@router.callback_query(F.data.startswith("inst:start:"))
-async def cb_inst_start(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    inst_id = int(cb.data.split(":")[2])
-    inst = await inst_repo.by_id(session, inst_id)
-    if not inst or inst.user_id != user.id:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-    if inst.product == ProductKind.CARDINAL:
-        from app.services.cardinal import start_tenant
-
-        gk = inst.config.get("golden_key")
-        if not gk:
-            await cb.answer("Сначала задайте golden_key", show_alert=True)
-            return
-        await start_tenant(inst.id, golden_key=gk)
-    else:
-        # script: spawn from existing tenant dir if exists
-        from app.services.script_host import tenant_dir
-        from app.services.supervisor import TenantSpec
-        import sys
-
-        td = tenant_dir(inst.id)
-        if not td.exists():
-            await cb.answer("Сначала загрузите .zip", show_alert=True)
-            return
-        cmd = (inst.config.get("start_cmd") or "python main.py").split()
-        cmd[0] = sys.executable if cmd[0] == "python" else cmd[0]
-        await supervisor.start(
-            TenantSpec(
-                instance_id=inst.id,
-                name=f"script-{inst.id}",
-                cwd=td,
-                cmd=cmd,
-                env={"PYTHONUNBUFFERED": "1"},
-            )
-        )
-    inst.status = InstanceStatus.LIVE
-    await cb.answer("Запущено")
-    await cb_inst_open(cb, session, user)
-
-
-@router.callback_query(F.data.startswith("inst:stop:"))
-async def cb_inst_stop(
-    cb: CallbackQuery, session: AsyncSession, user: User
-) -> None:
-    inst_id = int(cb.data.split(":")[2])
-    inst = await inst_repo.by_id(session, inst_id)
-    if not inst or inst.user_id != user.id:
-        await cb.answer("Не найдено", show_alert=True)
-        return
-    await supervisor.stop(inst.id)
-    inst.status = InstanceStatus.SUSPENDED
-    await cb.answer("Остановлено")
-    await cb_inst_open(cb, session, user)
-
-
 @router.callback_query(F.data.startswith("inst:restart:"))
 async def cb_inst_restart(
     cb: CallbackQuery, session: AsyncSession, user: User
@@ -168,8 +128,22 @@ async def cb_inst_restart(
     if not inst or inst.user_id != user.id:
         await cb.answer("Не найдено", show_alert=True)
         return
-    await supervisor.restart(inst.id)
+    if supervisor.tenants.get(inst.id):
+        await supervisor.restart(inst.id)
+    else:
+        # Супервизор ещё не знает про инстанс (например, после рестарта
+        # сервиса) — поднимаем его с нуля по конфигу из БД.
+        if inst.product == ProductKind.CARDINAL:
+            from app.services.cardinal import start_tenant
+
+            gk = (inst.config or {}).get("golden_key")
+            if not gk:
+                await cb.answer("Сначала задайте golden_key", show_alert=True)
+                return
+            await start_tenant(inst.id, golden_key=gk)
     inst.status = InstanceStatus.LIVE
+    inst.desired_state = "live"
+    inst.actual_state = "live"
     await cb.answer("Перезапущено")
     await cb_inst_open(cb, session, user)
 
