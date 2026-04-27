@@ -9,7 +9,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Coupon, ProductKind
+from app.db.models import Coupon, CouponRedemption, ProductKind
 from app.utils.time import now_utc
 
 
@@ -69,7 +69,11 @@ async def list_all(session: AsyncSession, *, only_unused: bool = False) -> list[
 async def redeem(
     session: AsyncSession, code: str, user_id: int
 ) -> tuple[bool, str, Optional[Coupon]]:
-    """Returns (success, message, coupon)."""
+    """Returns (success, message, coupon).
+
+    A multi-use coupon can be activated by up to ``max_uses`` DIFFERENT users;
+    any single user can redeem it at most once.
+    """
     cp = await by_code(session, code.strip().upper())
     if not cp:
         return False, "Купон не найден.", None
@@ -77,6 +81,16 @@ async def redeem(
         return False, "Купон исчерпал лимит активаций.", None
     if cp.expires_at and cp.expires_at < now_utc():
         return False, "Срок купона истёк.", None
+    # Per-user idempotency.
+    existing = await session.execute(
+        select(CouponRedemption).where(
+            CouponRedemption.coupon_id == cp.id,
+            CouponRedemption.user_id == user_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        return False, "Ты уже активировал этот купон.", None
+    session.add(CouponRedemption(coupon_id=cp.id, user_id=user_id))
     cp.uses_count = (cp.uses_count or 0) + 1
     cp.used_by = user_id
     cp.used_at = now_utc()
