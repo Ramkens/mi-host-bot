@@ -231,6 +231,30 @@ class Coupon(Base):
     )
 
 
+class CouponRedemption(Base):
+    """Per-user coupon-usage ledger.
+
+    Prevents the same user from redeeming the same multi-use coupon more than
+    once. The old ``Coupon.uses_count`` only tracked TOTAL activations, so a
+    single admin testing a 200-use coupon could rack up 200 × days on
+    themselves. This table enforces (coupon_id, user_id) uniqueness.
+    """
+
+    __tablename__ = "coupon_redemptions"
+    __table_args__ = (
+        UniqueConstraint("coupon_id", "user_id", name="uq_coupon_user"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    coupon_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("coupons.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    redeemed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now()
+    )
+
+
 class Setting(Base):
     """Mutable runtime settings (e.g. dynamic admin list, channel id)."""
 
