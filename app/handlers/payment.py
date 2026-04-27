@@ -10,7 +10,13 @@ import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile, Message
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -58,17 +64,18 @@ async def cb_buy_menu(cb: CallbackQuery, state: FSMContext) -> None:
         "Авто-запуск, авто-рестарт, смена golden_key и заливка конфигов прямо в боте.\n\n"
         "Сначала пришли настройки, потом выставлю счёт."
     )
+    kb = buy_menu(price_rub=settings.price_cardinal_rub)
     if cb.message:
         try:
             await cb.message.edit_caption(
-                caption=text, parse_mode="HTML", reply_markup=buy_menu()
+                caption=text, parse_mode="HTML", reply_markup=kb
             )
         except Exception:
             await cb.message.answer_photo(
                 FSInputFile(str(p)),
                 caption=text,
                 parse_mode="HTML",
-                reply_markup=buy_menu(),
+                reply_markup=kb,
             )
     await cb.answer()
 
@@ -578,3 +585,224 @@ async def _notify_admins_about_purchase(
             await bot.send_message(admin_id, text, parse_mode="HTML")
         except Exception:  # noqa: BLE001
             logger.debug("admin notify failed for %s", admin_id)
+
+
+# ---------------------------------------------------------------------------
+# Renewal flow (Продление хостинга)
+# ---------------------------------------------------------------------------
+
+
+class RenewFSM(StatesGroup):
+    awaiting_coupon = State()
+
+
+def _fmt_expires(sub) -> str:
+    if not sub or not sub.expires_at:
+        return "нет подписки"
+    from app.utils.time import now_utc
+
+    delta = sub.expires_at - now_utc()
+    if delta.total_seconds() <= 0:
+        return f"истекла ({sub.expires_at.strftime('%d.%m.%Y')})"
+    days = delta.days
+    return f"до {sub.expires_at.strftime('%d.%m.%Y')} (осталось {days} дн.)"
+
+
+@router.callback_query(F.data == "renew:menu")
+async def cb_renew_menu(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    await state.clear()
+    items = await inst_repo.list_for_user(session, user.id, ProductKind.CARDINAL)
+    if not items:
+        if cb.message:
+            await cb.message.answer(
+                "<b>Продление хостинга</b>\n\n"
+                "У тебя пока нет активного сервера. Сначала купи — кнопка «FunPay Cardinal».",
+                parse_mode="HTML",
+                reply_markup=back_to_menu(),
+            )
+        await cb.answer()
+        return
+    sub = await subs_repo.get(session, user.id, ProductKind.CARDINAL)
+    rows: list[list[InlineKeyboardButton]] = []
+    for inst in items:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"Сервер #{inst.id} · {_fmt_expires(sub)}",
+                callback_data=f"renew:start:{inst.id}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="« В меню", callback_data="menu")])
+    text = (
+        "<b>Продление хостинга</b>\n\n"
+        f"Стоимость: <b>{settings.price_cardinal_rub} ₽</b> · "
+        f"+{settings.subscription_days} дней.\n"
+        "Выбери сервер, который хочешь продлить."
+    )
+    if cb.message:
+        await cb.message.answer(
+            text, parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("renew:start:"))
+async def cb_renew_start(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    if not cb.data:
+        return
+    try:
+        inst_id = int(cb.data.split(":")[2])
+    except Exception:
+        await cb.answer("Не найдено", show_alert=True)
+        return
+    inst = await inst_repo.by_id(session, inst_id)
+    if not inst or inst.user_id != user.id or inst.status == InstanceStatus.DELETED:
+        await cb.answer("Сервер не найден", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(
+        mode="renew",
+        renew_instance_id=inst_id,
+        product=ProductKind.CARDINAL.value,
+    )
+    sub = await subs_repo.get(session, user.id, ProductKind.CARDINAL)
+    text = (
+        "<b>Продление хостинга</b>\n\n"
+        f"Сервер: <b>#{inst.id}</b>\n"
+        f"Текущая подписка: {_fmt_expires(sub)}\n"
+        f"Будет продлена на <b>{settings.subscription_days} дней</b>\n"
+        f"К оплате: <b>{settings.price_cardinal_rub} ₽</b>\n\n"
+        "Оплата через @CryptoBot в USDT. "
+        "Если есть купон — нажми «У меня есть купон»."
+    )
+    if cb.message:
+        await cb.message.answer(
+            text, parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Оплатить",
+                                      callback_data="renew:invoice")],
+                [InlineKeyboardButton(text="У меня есть купон",
+                                      callback_data="renew:coupon")],
+                [InlineKeyboardButton(text="« Отмена", callback_data="menu")],
+            ]),
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "renew:invoice")
+async def cb_renew_invoice(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    data = await state.get_data()
+    if data.get("mode") != "renew" or not data.get("renew_instance_id"):
+        await cb.answer("Начни с «Продление хостинга»", show_alert=True)
+        return
+    product = ProductKind.CARDINAL
+    price = settings.price_cardinal_rub
+    client = CryptoBotClient()
+    if not client.enabled:
+        await cb.answer("Оплата временно недоступна — пиши в поддержку",
+                        show_alert=True)
+        return
+    try:
+        invoice = await client.create_invoice(
+            amount_rub=price,
+            description=f"Mi Host · Продление · {settings.subscription_days} дней",
+            payload=f"{user.id}:{product.value}",
+            paid_btn_url=f"https://t.me/{(await cb.bot.get_me()).username}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("create_invoice (renew) failed: %s", exc)
+        await cb.answer("Не удалось создать счёт", show_alert=True)
+        return
+    await payments_repo.create(
+        session,
+        user_id=user.id,
+        product=product,
+        invoice_id=str(invoice["invoice_id"]),
+        amount_rub=price,
+        asset=invoice.get("asset"),
+        amount_crypto=invoice.get("amount"),
+        pay_url=invoice.get("pay_url") or invoice.get("bot_invoice_url"),
+    )
+    await logs_repo.write(
+        session,
+        kind="payment.created",
+        message=f"renew invoice {invoice['invoice_id']}",
+        user_id=user.id,
+        meta={"amount_rub": price, "mode": "renew",
+              "instance_id": data.get("renew_instance_id")},
+    )
+    await session.commit()
+    pay_url = invoice.get("pay_url") or invoice.get("bot_invoice_url")
+    text = (
+        "<b>Счёт на продление</b>\n\n"
+        f"Сумма: <b>{price} ₽</b> ≈ "
+        f"{invoice.get('amount')} {invoice.get('asset')}\n"
+        f"+{settings.subscription_days} дней к подписке\n\n"
+        "Оплата в USDT через @CryptoBot. После оплаты нажми «Я оплатил»."
+    )
+    if cb.message:
+        await cb.message.answer(
+            text, parse_mode="HTML",
+            reply_markup=pay_buttons(pay_url or "https://t.me/CryptoBot"),
+            disable_web_page_preview=True,
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "renew:coupon")
+async def cb_renew_coupon(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    data = await state.get_data()
+    if data.get("mode") != "renew":
+        await cb.answer("Начни с «Продление хостинга»", show_alert=True)
+        return
+    await state.set_state(RenewFSM.awaiting_coupon)
+    if cb.message:
+        await cb.message.answer(
+            "Пришли код купона одним сообщением "
+            "(формат <code>MH-XXXXXXXX</code>).",
+            parse_mode="HTML",
+        )
+    await cb.answer()
+
+
+@router.message(RenewFSM.awaiting_coupon)
+async def receive_renew_coupon(
+    msg: Message, state: FSMContext, session: AsyncSession, user: User
+) -> None:
+    code = (msg.text or "").strip().upper()
+    ok, message, coupon = await coupons_repo.redeem(session, code, user.id)
+    if not ok or not coupon:
+        await msg.answer(f"Купон не подошёл: {message}")
+        return
+    if coupon.product != ProductKind.CARDINAL:
+        await msg.answer(
+            "Купон выдан под другой продукт. "
+            "Запроси у администратора подходящий."
+        )
+        return
+    await subs_repo.extend(session, user.id, ProductKind.CARDINAL, coupon.days)
+    await logs_repo.write(
+        session,
+        kind="coupon.redeemed",
+        message=f"{code} · renew +{coupon.days}d",
+        user_id=user.id,
+    )
+    await session.commit()
+    await msg.answer(
+        f"Купон применён: +{coupon.days} дней к подписке на хостинг.",
+        parse_mode="HTML",
+        reply_markup=back_to_menu(),
+    )
+    await _notify_admins_about_purchase(
+        msg, user, ProductKind.CARDINAL,
+        paid=False, amount_rub=0, days=coupon.days,
+    )
+    await state.clear()
