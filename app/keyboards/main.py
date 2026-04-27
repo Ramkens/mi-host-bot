@@ -27,14 +27,20 @@ def back_to_menu() -> InlineKeyboardMarkup:
     )
 
 
-def buy_menu() -> InlineKeyboardMarkup:
-    """Один продукт — FunPay Cardinal. Купон — только на шаге оплаты."""
+def buy_menu(price_rub: int = 40) -> InlineKeyboardMarkup:
+    """Покупка нового сервера и продление существующего."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="FunPay Cardinal — 40 ₽ / 30 дней",
+                    text=f"FunPay Cardinal — {price_rub} ₽ / 30 дней",
                     callback_data="buy:start:cardinal",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Продление хостинга",
+                    callback_data="renew:menu",
                 )
             ],
             [InlineKeyboardButton(text="« В меню", callback_data="menu")],
